@@ -1,0 +1,84 @@
+[project]
+name = "document-rag"
+version = "0.1.0"
+description = "Auditable RAG system for financial and business documents."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[build-system]
+requires = ["uv_build>=0.11.28,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "mypy>=2.3.0",
+    "pre-commit>=4.6.0",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.15.21",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # Pyflakes: undefined and unused objects
+    "I",   # import sorting
+    "B",   # common Python bugs
+    "UP",  # outdated Python syntax
+    "SIM", # unnecessary code complexity
+    "RUF", # Ruff-specific correctness rules
+]
+ignore = [
+    "E501", # formatting is controlled by ruff format
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+docstring-code-format = true
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src", "tests"]
+strict = true
+pretty = true
+show_error_codes = true
+show_error_context = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = [
+    "-ra",
+    "--strict-config",
+    "--strict-markers",
+    "--cov=document_rag",
+    "--cov-report=term-missing:skip-covered",
+]
+xfail_strict = true
+filterwarnings = [
+    "error",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["document_rag"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_covered = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]
