@@ -1,7 +1,9 @@
 [project]
 name = "document-rag"
 version = "0.1.0"
-requires-python = ">=3.12"
+description = "Auditable RAG system for financial and business documents."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
 dependencies = []
 
 [build-system]
