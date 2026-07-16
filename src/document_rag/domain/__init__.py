@@ -5,6 +5,7 @@ from document_rag.domain.documents import (
     DocumentElementType,
     TableCoordinates,
 )
+from document_rag.domain.evidence import Evidence
 from document_rag.domain.questions import Question, QuestionType
 
 __all__ = [
@@ -12,6 +13,7 @@ __all__ = [
     "Document",
     "DocumentElement",
     "DocumentElementType",
+    "Evidence",
     "Question",
     "QuestionType",
     "TableCoordinates",
