@@ -1,3 +1,4 @@
+from document_rag.domain.answers import Answer, AnswerStatus
 from document_rag.domain.base import BaseDomainModel
 from document_rag.domain.calculations import (
     Calculation,
@@ -15,6 +16,8 @@ from document_rag.domain.evidence import Evidence
 from document_rag.domain.questions import Question, QuestionType
 
 __all__ = [
+    "Answer",
+    "AnswerStatus",
     "BaseDomainModel",
     "Calculation",
     "CalculationOperand",
