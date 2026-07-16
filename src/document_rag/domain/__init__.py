@@ -4,6 +4,7 @@ from document_rag.domain.calculations import (
     CalculationOperand,
     CalculationOperation,
 )
+from document_rag.domain.citations import Citation
 from document_rag.domain.documents import (
     Document,
     DocumentElement,
@@ -18,6 +19,7 @@ __all__ = [
     "Calculation",
     "CalculationOperand",
     "CalculationOperation",
+    "Citation",
     "Document",
     "DocumentElement",
     "DocumentElementType",
