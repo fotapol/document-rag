@@ -32,6 +32,7 @@ quality checks, tests, and continuous integration.
 git clone https://github.com/fotapol/document-rag.git
 cd document-rag
 uv sync
+```
 
 ## Quality checks
 
