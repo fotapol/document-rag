@@ -1,12 +1,11 @@
 from decimal import Decimal
 from enum import StrEnum
-from typing import Annotated, Self
+from typing import Self
 
 from pydantic import Field, model_validator
 
 from document_rag.domain.base import BaseDomainModel
-
-NonEmptyString = Annotated[str, Field(min_length=1)]
+from document_rag.domain.types import NonEmptyString
 
 
 class CalculationOperation(StrEnum):

@@ -1,11 +1,7 @@
-from typing import Annotated
-
 from pydantic import Field, FiniteFloat, JsonValue
 
 from document_rag.domain.base import BaseDomainModel
-
-NonEmptyString = Annotated[str, Field(min_length=1)]
-PositivePageNumber = Annotated[int, Field(ge=1)]
+from document_rag.domain.types import NonEmptyString, PositivePageNumber
 
 
 class Evidence(BaseDomainModel):
