@@ -43,7 +43,7 @@ class DocumentElement(BaseDomainModel):
     element_id: str = Field(min_length=1)
     document_id: str = Field(min_length=1)
     element_type: DocumentElementType
-    text: str = Field(min_length=1)
+    source_text: str = Field(min_length=1)
     page_number: int = Field(ge=1)
     section: str | None = Field(default=None, min_length=1)
     parent_element_id: str | None = Field(default=None, min_length=1)

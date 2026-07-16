@@ -40,7 +40,7 @@ def test_table_row_requires_coordinates() -> None:
             element_id="row-1",
             document_id="report",
             element_type=DocumentElementType.TABLE_ROW,
-            text="Revenue | 2025 | 120",
+            source_text="Revenue | 2025 | 120",
             page_number=14,
         )
 
@@ -50,7 +50,7 @@ def test_table_row_accepts_coordinates() -> None:
         element_id="row-1",
         document_id="report",
         element_type=DocumentElementType.TABLE_ROW,
-        text="Revenue | 2025 | 120",
+        source_text="Revenue | 2025 | 120",
         page_number=14,
         table_coordinates=TableCoordinates(
             table_id="table-1",
@@ -68,7 +68,7 @@ def test_paragraph_rejects_table_coordinates() -> None:
             element_id="paragraph-1",
             document_id="report",
             element_type=DocumentElementType.PARAGRAPH,
-            text="Revenue increased during the reporting period.",
+            source_text="Revenue increased during the reporting period.",
             page_number=14,
             table_coordinates=TableCoordinates(table_id="table-1"),
         )
