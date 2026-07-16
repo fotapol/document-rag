@@ -16,11 +16,14 @@ class DocumentElementType(StrEnum):
 
 
 class Document(BaseDomainModel):
+    """Source document processed by the RAG pipeline."""
+
     document_id: str = Field(min_length=1)
     file_name: str = Field(min_length=1)
     title: str | None = Field(default=None, min_length=1)
-    source_uri: str | None = None
-    source_hash: str | None = Field(
+    mime_type: str = Field(default="application/pdf", min_length=1)
+    source_uri: str | None = Field(default=None, min_length=1)
+    checksum_sha256: str | None = Field(
         default=None,
         pattern=r"^[a-f0-9]{64}$",
     )
