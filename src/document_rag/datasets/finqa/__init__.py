@@ -1,3 +1,10 @@
+from document_rag.datasets.finqa.manifest import (
+    ArtifactManifest,
+    FinQAManifest,
+    SplitManifest,
+    WrittenManifest,
+    write_finqa_manifest,
+)
 from document_rag.datasets.finqa.normalizer import (
     NormalizedFinQARecord,
     normalize_finqa_record,
@@ -16,14 +23,19 @@ from document_rag.datasets.finqa.writer import (
 )
 
 __all__ = [
+    "ArtifactManifest",
+    "FinQAManifest",
     "FinQARawReader",
     "FinQARawRecord",
     "FinQARecordSource",
     "NormalizedFinQARecord",
     "PreparedFinQASplit",
+    "SplitManifest",
     "WrittenArtifact",
     "WrittenFinQASplit",
+    "WrittenManifest",
     "normalize_finqa_record",
     "prepare_finqa_split",
+    "write_finqa_manifest",
     "write_finqa_split",
 ]

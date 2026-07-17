@@ -7,6 +7,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from document_rag.datasets.finqa.preparer import PreparedFinQASplit
+from document_rag.datasets.models import DatasetSplit
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +23,7 @@ class WrittenArtifact:
 class WrittenFinQASplit:
     """Artifacts generated for one normalized FinQA split."""
 
+    split: DatasetSplit
     documents: WrittenArtifact
     elements: WrittenArtifact
     examples: WrittenArtifact
@@ -37,6 +39,7 @@ def write_finqa_split(
     split_directory = output_directory / prepared_split.split.value
 
     return WrittenFinQASplit(
+        split=prepared_split.split,
         documents=_write_jsonl(
             split_directory / "documents.jsonl",
             prepared_split.documents,
