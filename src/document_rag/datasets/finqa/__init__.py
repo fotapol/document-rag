@@ -16,6 +16,10 @@ from document_rag.datasets.finqa.preparer import (
 )
 from document_rag.datasets.finqa.raw_models import FinQARawRecord
 from document_rag.datasets.finqa.reader import FinQARawReader
+from document_rag.datasets.finqa.service import (
+    FinQAPreparationResult,
+    prepare_finqa_dataset,
+)
 from document_rag.datasets.finqa.writer import (
     WrittenArtifact,
     WrittenFinQASplit,
@@ -25,6 +29,7 @@ from document_rag.datasets.finqa.writer import (
 __all__ = [
     "ArtifactManifest",
     "FinQAManifest",
+    "FinQAPreparationResult",
     "FinQARawReader",
     "FinQARawRecord",
     "FinQARecordSource",
@@ -35,6 +40,7 @@ __all__ = [
     "WrittenFinQASplit",
     "WrittenManifest",
     "normalize_finqa_record",
+    "prepare_finqa_dataset",
     "prepare_finqa_split",
     "write_finqa_manifest",
     "write_finqa_split",
