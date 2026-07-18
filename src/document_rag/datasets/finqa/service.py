@@ -13,15 +13,22 @@ from document_rag.datasets.finqa.writer import (
     WrittenFinQASplit,
     write_finqa_split,
 )
+from document_rag.datasets.integrity import (
+    ReportOverlap,
+    SplitIntegritySnapshot,
+    build_split_integrity_snapshot,
+    validate_cross_split_integrity,
+)
 from document_rag.datasets.models import DatasetName, DatasetSplit
 
 
 @dataclass(frozen=True, slots=True)
 class FinQAPreparationResult:
-    """Artifacts produced by a complete FinQA preparation run."""
+    """Artifacts and integrity information produced by FinQA preparation."""
 
     splits: tuple[WrittenFinQASplit, ...]
     manifest: WrittenManifest
+    report_overlaps: tuple[ReportOverlap, ...]
 
 
 def prepare_finqa_dataset(
@@ -36,12 +43,12 @@ def prepare_finqa_dataset(
     if config.name is not DatasetName.FINQA:
         raise ValueError("FinQA preparation requires a FinQA configuration")
 
-    normalized_splits = tuple(splits)
+    selected_splits = tuple(splits)
 
-    if not normalized_splits:
+    if not selected_splits:
         raise ValueError("At least one dataset split must be selected")
 
-    if len(normalized_splits) != len(set(normalized_splits)):
+    if len(selected_splits) != len(set(selected_splits)):
         raise ValueError("Dataset splits must be unique")
 
     reader = FinQARawReader(
@@ -50,12 +57,25 @@ def prepare_finqa_dataset(
     )
 
     written_splits: list[WrittenFinQASplit] = []
+    integrity_snapshots: list[SplitIntegritySnapshot] = []
+    report_overlaps: list[ReportOverlap] = []
 
-    for split in normalized_splits:
+    for split in selected_splits:
         prepared_split = prepare_finqa_split(
             reader,
             split=split,
         )
+
+        integrity_snapshot = build_split_integrity_snapshot(prepared_split)
+
+        report_overlaps.extend(
+            validate_cross_split_integrity(
+                integrity_snapshot,
+                previous_snapshots=integrity_snapshots,
+            )
+        )
+
+        integrity_snapshots.append(integrity_snapshot)
 
         written_split = write_finqa_split(
             prepared_split,
@@ -80,4 +100,5 @@ def prepare_finqa_dataset(
     return FinQAPreparationResult(
         splits=ordered_splits,
         manifest=manifest,
+        report_overlaps=tuple(report_overlaps),
     )

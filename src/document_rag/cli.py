@@ -88,7 +88,10 @@ def _run_data_prepare(arguments: argparse.Namespace) -> int:
     split_values = cast(list[str] | None, arguments.splits)
 
     if dataset != DatasetName.FINQA.value:
-        print(f"error: unsupported dataset: {dataset}", file=sys.stderr)
+        print(
+            f"error: unsupported dataset: {dataset}",
+            file=sys.stderr,
+        )
         return 1
 
     splits = (
@@ -121,5 +124,14 @@ def _run_data_prepare(arguments: argparse.Namespace) -> int:
         )
 
     print(f"Manifest: {result.manifest.path}")
+
+    for overlap in result.report_overlaps:
+        print(
+            "Warning: "
+            f"{overlap.count} reports are shared between "
+            f"{overlap.left_split.value} and "
+            f"{overlap.right_split.value}",
+            file=sys.stderr,
+        )
 
     return 0
