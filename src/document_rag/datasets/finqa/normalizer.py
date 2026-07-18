@@ -33,6 +33,26 @@ class NormalizedFinQARecord:
     example: DatasetExample
 
 
+def _reference_answer_text(record: FinQARawRecord) -> str:
+    answer = _optional_stringify(record.qa.answer)
+
+    if answer is not None:
+        return answer
+
+    return _stringify(
+        record.qa.exe_ans,
+        field_name="exe_ans",
+    )
+
+
+def _optional_stringify(value: JsonValue) -> str | None:
+    if value is None:
+        return None
+
+    text = str(value).strip()
+    return text or None
+
+
 def normalize_finqa_record(
     record: FinQARawRecord,
     *,
@@ -71,7 +91,7 @@ def normalize_finqa_record(
     )
 
     reference_answer = ReferenceAnswer(
-        text=_stringify(record.qa.answer, field_name="answer"),
+        text=_reference_answer_text(record),
         executable_answer=record.qa.exe_ans,
         explanation=_optional_string(record.qa.explanation),
         program=_optional_string(record.qa.program),

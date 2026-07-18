@@ -19,7 +19,7 @@ class FinQARawStep(FinQARawModel):
 
 class FinQARawQuestionAnswer(FinQARawModel):
     question: str
-    answer: JsonValue
+    answer: JsonValue = None
     explanation: str
     steps: tuple[FinQARawStep, ...]
     program: str

@@ -106,3 +106,45 @@ def test_normalizer_rejects_unknown_supporting_fact() -> None:
             invalid_record,
             split=DatasetSplit.TRAIN,
         )
+
+
+def test_normalizer_uses_executable_answer_when_answer_is_empty() -> None:
+    record = make_raw_record()
+    record_with_empty_answer = record.model_copy(
+        update={
+            "qa": record.qa.model_copy(
+                update={
+                    "answer": "",
+                    "exe_ans": 20,
+                }
+            )
+        }
+    )
+
+    result = normalize_finqa_record(
+        record_with_empty_answer,
+        split=DatasetSplit.VALIDATION,
+    )
+
+    assert result.example.reference_answer.text == "20"
+    assert result.example.reference_answer.executable_answer == 20
+
+
+def test_normalizer_rejects_missing_answer_and_executable_answer() -> None:
+    record = make_raw_record()
+    invalid_record = record.model_copy(
+        update={
+            "qa": record.qa.model_copy(
+                update={
+                    "answer": "",
+                    "exe_ans": None,
+                }
+            )
+        }
+    )
+
+    with pytest.raises(ValueError, match="exe_ans cannot be null"):
+        normalize_finqa_record(
+            invalid_record,
+            split=DatasetSplit.VALIDATION,
+        )
