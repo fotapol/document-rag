@@ -27,7 +27,7 @@ class ReasoningStep(BaseDomainModel):
 
     operation: NonEmptyString
     arguments: tuple[NonEmptyString, ...] = Field(min_length=1)
-    result: NonEmptyString
+    result: NonEmptyString | None = None
 
 
 class ReferenceAnswer(BaseDomainModel):

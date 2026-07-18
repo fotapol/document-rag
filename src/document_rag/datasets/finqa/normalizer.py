@@ -4,7 +4,10 @@ from pathlib import PurePosixPath
 
 from pydantic import JsonValue
 
-from document_rag.datasets.finqa.raw_models import FinQARawRecord
+from document_rag.datasets.finqa.raw_models import (
+    FinQARawRecord,
+    FinQARawStep,
+)
 from document_rag.datasets.models import (
     DatasetExample,
     DatasetName,
@@ -53,6 +56,23 @@ def _optional_stringify(value: JsonValue) -> str | None:
     return text or None
 
 
+def _normalize_reasoning_step(step: FinQARawStep) -> ReasoningStep:
+    arguments = tuple(
+        argument
+        for value in (step.arg1, step.arg2)
+        if (argument := _optional_stringify(value)) is not None
+    )
+
+    if not arguments:
+        raise ValueError(f"Reasoning step {step.op!r} must contain at least one argument")
+
+    return ReasoningStep(
+        operation=step.op,
+        arguments=arguments,
+        result=_optional_stringify(step.res),
+    )
+
+
 def normalize_finqa_record(
     record: FinQARawRecord,
     *,
@@ -96,17 +116,7 @@ def normalize_finqa_record(
         explanation=_optional_string(record.qa.explanation),
         program=_optional_string(record.qa.program),
         normalized_program=_optional_string(record.qa.program_re),
-        steps=tuple(
-            ReasoningStep(
-                operation=step.op,
-                arguments=(
-                    _stringify(step.arg1, field_name="step.arg1"),
-                    _stringify(step.arg2, field_name="step.arg2"),
-                ),
-                result=_stringify(step.res, field_name="step.res"),
-            )
-            for step in record.qa.steps
-        ),
+        steps=tuple(_normalize_reasoning_step(step) for step in record.qa.steps),
     )
 
     example = DatasetExample(
@@ -183,7 +193,11 @@ def _build_elements(
                 },
             )
         )
+
         source_key_to_element_id[source_key] = element_id
+
+        negative_source_key = f"text_{index - len(combined_text)}"
+        source_key_to_element_id[negative_source_key] = element_id
 
     table_id = _element_id(document_id, "table")
 

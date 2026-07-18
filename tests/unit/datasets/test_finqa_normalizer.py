@@ -148,3 +148,122 @@ def test_normalizer_rejects_missing_answer_and_executable_answer() -> None:
             invalid_record,
             split=DatasetSplit.VALIDATION,
         )
+
+
+def test_normalizer_accepts_table_operation_without_second_argument() -> None:
+    record = make_raw_record()
+    record_with_unary_step = record.model_copy(
+        update={
+            "qa": record.qa.model_copy(
+                update={
+                    "steps": (
+                        record.qa.steps[0].model_copy(
+                            update={
+                                "op": "min1-1",
+                                "arg1": "expected volatility",
+                                "arg2": "",
+                                "res": "39.8",
+                            }
+                        ),
+                    ),
+                    "program": (
+                        "table_min(expected volatility, none), table_max(expected volatility, none)"
+                    ),
+                }
+            )
+        }
+    )
+
+    result = normalize_finqa_record(
+        record_with_unary_step,
+        split=DatasetSplit.TRAIN,
+    )
+
+    step = result.example.reference_answer.steps[0]
+
+    assert step.operation == "min1-1"
+    assert step.arguments == ("expected volatility",)
+    assert step.result == "39.8"
+
+
+def test_normalizer_rejects_reasoning_step_without_arguments() -> None:
+    record = make_raw_record()
+    invalid_record = record.model_copy(
+        update={
+            "qa": record.qa.model_copy(
+                update={
+                    "steps": (
+                        record.qa.steps[0].model_copy(
+                            update={
+                                "arg1": "",
+                                "arg2": "",
+                            }
+                        ),
+                    )
+                }
+            )
+        }
+    )
+
+    with pytest.raises(ValueError, match="at least one argument"):
+        normalize_finqa_record(
+            invalid_record,
+            split=DatasetSplit.TRAIN,
+        )
+
+
+def test_normalizer_accepts_reasoning_step_without_result() -> None:
+    record = make_raw_record()
+    record_without_step_result = record.model_copy(
+        update={
+            "qa": record.qa.model_copy(
+                update={
+                    "steps": (
+                        record.qa.steps[0].model_copy(
+                            update={
+                                "op": "divide1-1",
+                                "arg1": "27.1",
+                                "arg2": "82.7",
+                                "res": "",
+                            }
+                        ),
+                    )
+                }
+            )
+        }
+    )
+
+    result = normalize_finqa_record(
+        record_without_step_result,
+        split=DatasetSplit.TRAIN,
+    )
+
+    step = result.example.reference_answer.steps[0]
+
+    assert step.arguments == ("27.1", "82.7")
+    assert step.result is None
+
+
+def test_normalizer_resolves_negative_text_index() -> None:
+    record = make_raw_record()
+    record_with_negative_index = record.model_copy(
+        update={
+            "qa": record.qa.model_copy(
+                update={
+                    "gold_inds": {
+                        "text_-1": "Additional information follows.",
+                    }
+                }
+            )
+        }
+    )
+
+    result = normalize_finqa_record(
+        record_with_negative_index,
+        split=DatasetSplit.TRAIN,
+    )
+
+    supporting_fact = result.example.supporting_facts[0]
+
+    assert supporting_fact.source_key == "text_-1"
+    assert supporting_fact.element_id.endswith(":text_2")
