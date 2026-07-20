@@ -8,6 +8,7 @@ from typing import cast
 
 from document_rag.datasets.config import load_dataset_config
 from document_rag.datasets.finqa import prepare_finqa_dataset
+from document_rag.datasets.finqa.writer import WrittenFinQASplit
 from document_rag.datasets.models import DatasetName, DatasetSplit
 
 
@@ -116,14 +117,18 @@ def _run_data_prepare(arguments: argparse.Namespace) -> int:
     print(f"Prepared dataset: {dataset}")
 
     for written_split in result.splits:
-        print(
-            f"  {written_split.split.value}: "
-            f"{written_split.documents.record_count} documents, "
-            f"{written_split.elements.record_count} elements, "
-            f"{written_split.examples.record_count} examples"
-        )
+        _print_split(written_split)
 
     print(f"Manifest: {result.manifest.path}")
+
+    if result.sample_splits:
+        print("Prepared deterministic sample:")
+
+        for written_split in result.sample_splits:
+            _print_split(written_split)
+
+        if result.sample_manifest is not None:
+            print(f"Sample manifest: {result.sample_manifest.path}")
 
     for overlap in result.report_overlaps:
         print(
@@ -135,3 +140,17 @@ def _run_data_prepare(arguments: argparse.Namespace) -> int:
         )
 
     return 0
+
+
+def _print_split(written_split: WrittenFinQASplit) -> None:
+    split = written_split.split
+    documents = written_split.documents
+    elements = written_split.elements
+    examples = written_split.examples
+
+    print(
+        f"  {split.value}: "
+        f"{documents.record_count} documents, "
+        f"{elements.record_count} elements, "
+        f"{examples.record_count} examples"
+    )
