@@ -39,6 +39,12 @@ from document_rag.datasets.docfinqa.raw_models import (
 from document_rag.datasets.docfinqa.reader import (
     DocFinQARawReader,
 )
+from document_rag.datasets.docfinqa.service import (
+    DEFAULT_EVIDENCE_MINIMUM_SCORE,
+    DocFinQAPreparationResult,
+    PreparedDocFinQASplitResult,
+    prepare_docfinqa_dataset,
+)
 from document_rag.datasets.docfinqa.writer import (
     WrittenDocFinQAArtifact,
     WrittenDocFinQASplit,
@@ -48,6 +54,7 @@ from document_rag.datasets.docfinqa.writer import (
 __all__ = [
     "DEFAULT_CHUNK_OVERLAP",
     "DEFAULT_CHUNK_SIZE",
+    "DEFAULT_EVIDENCE_MINIMUM_SCORE",
     "DocFinQAChunk",
     "DocFinQAChunker",
     "DocFinQAEvidenceMatch",
@@ -58,6 +65,7 @@ __all__ = [
     "DocFinQANormalizationResult",
     "DocFinQANormalizationStatus",
     "DocFinQANormalizer",
+    "DocFinQAPreparationResult",
     "DocFinQAPreparationStats",
     "DocFinQARawReader",
     "DocFinQARawRecord",
@@ -69,9 +77,11 @@ __all__ = [
     "PreparedDocFinQADocument",
     "PreparedDocFinQAExample",
     "PreparedDocFinQAItem",
+    "PreparedDocFinQASplitResult",
     "WrittenDocFinQAArtifact",
     "WrittenDocFinQAManifest",
     "WrittenDocFinQASplit",
+    "prepare_docfinqa_dataset",
     "write_docfinqa_manifest",
     "write_docfinqa_split",
 ]
