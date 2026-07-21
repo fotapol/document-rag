@@ -13,6 +13,11 @@ from document_rag.datasets.docfinqa.linkage import (
     DocFinQALinkResult,
     DocFinQALinkStatus,
 )
+from document_rag.datasets.docfinqa.manifest import (
+    DocFinQASplitManifestInput,
+    WrittenDocFinQAManifest,
+    write_docfinqa_manifest,
+)
 from document_rag.datasets.docfinqa.normalizer import (
     DocFinQANormalizationResult,
     DocFinQANormalizationStatus,
@@ -56,6 +61,7 @@ __all__ = [
     "DocFinQAPreparationStats",
     "DocFinQARawReader",
     "DocFinQARawRecord",
+    "DocFinQASplitManifestInput",
     "DocFinQASplitPreparer",
     "NormalizedDocFinQAElement",
     "NormalizedDocFinQARecord",
@@ -64,6 +70,8 @@ __all__ = [
     "PreparedDocFinQAExample",
     "PreparedDocFinQAItem",
     "WrittenDocFinQAArtifact",
+    "WrittenDocFinQAManifest",
     "WrittenDocFinQASplit",
+    "write_docfinqa_manifest",
     "write_docfinqa_split",
 ]
