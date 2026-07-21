@@ -1,3 +1,9 @@
+from document_rag.datasets.docfinqa.chunking import (
+    DEFAULT_CHUNK_OVERLAP,
+    DEFAULT_CHUNK_SIZE,
+    DocFinQAChunk,
+    DocFinQAChunker,
+)
 from document_rag.datasets.docfinqa.linkage import (
     DocFinQALinker,
     DocFinQALinkResult,
@@ -11,6 +17,10 @@ from document_rag.datasets.docfinqa.reader import (
 )
 
 __all__ = [
+    "DEFAULT_CHUNK_OVERLAP",
+    "DEFAULT_CHUNK_SIZE",
+    "DocFinQAChunk",
+    "DocFinQAChunker",
     "DocFinQALinkResult",
     "DocFinQALinkStatus",
     "DocFinQALinker",
