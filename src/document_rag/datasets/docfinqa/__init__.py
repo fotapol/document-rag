@@ -13,6 +13,14 @@ from document_rag.datasets.docfinqa.linkage import (
     DocFinQALinkResult,
     DocFinQALinkStatus,
 )
+from document_rag.datasets.docfinqa.normalizer import (
+    DocFinQANormalizationResult,
+    DocFinQANormalizationStatus,
+    DocFinQANormalizer,
+    NormalizedDocFinQAElement,
+    NormalizedDocFinQARecord,
+    NormalizedDocFinQASupportingFact,
+)
 from document_rag.datasets.docfinqa.raw_models import (
     DocFinQARawRecord,
 )
@@ -30,6 +38,12 @@ __all__ = [
     "DocFinQALinkResult",
     "DocFinQALinkStatus",
     "DocFinQALinker",
+    "DocFinQANormalizationResult",
+    "DocFinQANormalizationStatus",
+    "DocFinQANormalizer",
     "DocFinQARawReader",
     "DocFinQARawRecord",
+    "NormalizedDocFinQAElement",
+    "NormalizedDocFinQARecord",
+    "NormalizedDocFinQASupportingFact",
 ]
