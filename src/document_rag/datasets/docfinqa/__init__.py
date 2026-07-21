@@ -34,6 +34,11 @@ from document_rag.datasets.docfinqa.raw_models import (
 from document_rag.datasets.docfinqa.reader import (
     DocFinQARawReader,
 )
+from document_rag.datasets.docfinqa.writer import (
+    WrittenDocFinQAArtifact,
+    WrittenDocFinQASplit,
+    write_docfinqa_split,
+)
 
 __all__ = [
     "DEFAULT_CHUNK_OVERLAP",
@@ -58,4 +63,7 @@ __all__ = [
     "PreparedDocFinQADocument",
     "PreparedDocFinQAExample",
     "PreparedDocFinQAItem",
+    "WrittenDocFinQAArtifact",
+    "WrittenDocFinQASplit",
+    "write_docfinqa_split",
 ]
