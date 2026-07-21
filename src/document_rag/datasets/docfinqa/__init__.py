@@ -4,6 +4,10 @@ from document_rag.datasets.docfinqa.chunking import (
     DocFinQAChunk,
     DocFinQAChunker,
 )
+from document_rag.datasets.docfinqa.evidence import (
+    DocFinQAEvidenceMatch,
+    DocFinQAEvidenceSelector,
+)
 from document_rag.datasets.docfinqa.linkage import (
     DocFinQALinker,
     DocFinQALinkResult,
@@ -21,6 +25,8 @@ __all__ = [
     "DEFAULT_CHUNK_SIZE",
     "DocFinQAChunk",
     "DocFinQAChunker",
+    "DocFinQAEvidenceMatch",
+    "DocFinQAEvidenceSelector",
     "DocFinQALinkResult",
     "DocFinQALinkStatus",
     "DocFinQALinker",
