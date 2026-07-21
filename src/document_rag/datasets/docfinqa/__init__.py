@@ -21,6 +21,13 @@ from document_rag.datasets.docfinqa.normalizer import (
     NormalizedDocFinQARecord,
     NormalizedDocFinQASupportingFact,
 )
+from document_rag.datasets.docfinqa.preparer import (
+    DocFinQAPreparationStats,
+    DocFinQASplitPreparer,
+    PreparedDocFinQADocument,
+    PreparedDocFinQAExample,
+    PreparedDocFinQAItem,
+)
 from document_rag.datasets.docfinqa.raw_models import (
     DocFinQARawRecord,
 )
@@ -41,9 +48,14 @@ __all__ = [
     "DocFinQANormalizationResult",
     "DocFinQANormalizationStatus",
     "DocFinQANormalizer",
+    "DocFinQAPreparationStats",
     "DocFinQARawReader",
     "DocFinQARawRecord",
+    "DocFinQASplitPreparer",
     "NormalizedDocFinQAElement",
     "NormalizedDocFinQARecord",
     "NormalizedDocFinQASupportingFact",
+    "PreparedDocFinQADocument",
+    "PreparedDocFinQAExample",
+    "PreparedDocFinQAItem",
 ]
