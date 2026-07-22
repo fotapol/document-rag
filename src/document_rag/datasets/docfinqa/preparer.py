@@ -81,11 +81,15 @@ class DocFinQAPreparationStats:
     skipped_answer_mismatch: int
     skipped_evidence_incomplete: int
     unmatched_evidence_facts: int
+    skipped_duplicate: int
 
     @property
     def skipped_records(self) -> int:
         return (
-            self.skipped_ambiguous + self.skipped_answer_mismatch + self.skipped_evidence_incomplete
+            self.skipped_ambiguous
+            + self.skipped_answer_mismatch
+            + self.skipped_evidence_incomplete
+            + self.skipped_duplicate
         )
 
 
@@ -122,6 +126,7 @@ class DocFinQASplitPreparer:
         self._skipped_answer_mismatch = 0
         self._skipped_evidence_incomplete = 0
         self._unmatched_evidence_facts = 0
+        self._skipped_duplicate = 0
 
     @property
     def stats(self) -> DocFinQAPreparationStats:
@@ -137,6 +142,7 @@ class DocFinQASplitPreparer:
             skipped_answer_mismatch=(self._skipped_answer_mismatch),
             skipped_evidence_incomplete=(self._skipped_evidence_incomplete),
             unmatched_evidence_facts=(self._unmatched_evidence_facts),
+            skipped_duplicate=self._skipped_duplicate,
         )
 
     def iter_prepare(
@@ -194,7 +200,8 @@ class DocFinQASplitPreparer:
             normalized_record = normalization_result.record
 
             if normalized_record.example_id in self._seen_example_ids:
-                raise ValueError(f"Duplicate DocFinQA example ID: {normalized_record.example_id}")
+                self._skipped_duplicate += 1
+                continue
 
             self._seen_example_ids.add(normalized_record.example_id)
 

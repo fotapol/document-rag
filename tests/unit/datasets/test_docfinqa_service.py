@@ -10,6 +10,8 @@ from document_rag.datasets.config import (
     DatasetFiles,
 )
 from document_rag.datasets.docfinqa.service import (
+    DocFinQAProgressEvent,
+    DocFinQAProgressStage,
     prepare_docfinqa_dataset,
 )
 from document_rag.datasets.models import (
@@ -139,6 +141,7 @@ def test_service_prepares_selected_split(
     finqa_directory = tmp_path / "finqa"
     docfinqa_directory = tmp_path / "docfinqa"
     output_directory = tmp_path / "output"
+    progress_events: list[DocFinQAProgressEvent] = []
 
     prepare_sources(
         finqa_directory=finqa_directory,
@@ -159,6 +162,7 @@ def test_service_prepares_selected_split(
         chunk_size=100,
         chunk_overlap=20,
         evidence_minimum_score=0.8,
+        progress_callback=progress_events.append,
     )
 
     assert len(result.splits) == 1
@@ -186,6 +190,15 @@ def test_service_prepares_selected_split(
 
     assert train_manifest["statistics"]["total_records"] == 1
     assert train_manifest["statistics"]["normalized_records"] == 1
+
+    assert [event.stage for event in progress_events] == [
+        DocFinQAProgressStage.STARTED,
+        DocFinQAProgressStage.PROCESSING,
+        DocFinQAProgressStage.COMPLETED,
+    ]
+    assert progress_events[0].stats.total_records == 0
+    assert progress_events[1].stats.total_records == 1
+    assert progress_events[2].stats.normalized_records == 1
 
 
 def test_service_is_deterministic(

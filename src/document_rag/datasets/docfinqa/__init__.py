@@ -42,6 +42,9 @@ from document_rag.datasets.docfinqa.reader import (
 from document_rag.datasets.docfinqa.service import (
     DEFAULT_EVIDENCE_MINIMUM_SCORE,
     DocFinQAPreparationResult,
+    DocFinQAProgressCallback,
+    DocFinQAProgressEvent,
+    DocFinQAProgressStage,
     PreparedDocFinQASplitResult,
     prepare_docfinqa_dataset,
 )
@@ -67,6 +70,9 @@ __all__ = [
     "DocFinQANormalizer",
     "DocFinQAPreparationResult",
     "DocFinQAPreparationStats",
+    "DocFinQAProgressCallback",
+    "DocFinQAProgressEvent",
+    "DocFinQAProgressStage",
     "DocFinQARawReader",
     "DocFinQARawRecord",
     "DocFinQASplitManifestInput",

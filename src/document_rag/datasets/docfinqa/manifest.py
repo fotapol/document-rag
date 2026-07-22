@@ -182,7 +182,9 @@ def _validate_split(
 
     linked_records = stats.exact_links + stats.equivalent_links
 
-    accepted_or_evidence_skipped = stats.normalized_records + stats.skipped_evidence_incomplete
+    accepted_or_evidence_skipped = (
+        stats.normalized_records + stats.skipped_evidence_incomplete + stats.skipped_duplicate
+    )
 
     if linked_records != accepted_or_evidence_skipped:
         raise ValueError("DocFinQA linkage statistics do not add up")
@@ -238,6 +240,7 @@ def _serialize_stats(
         "total_records": stats.total_records,
         "unique_documents": stats.unique_documents,
         "unmatched_evidence_facts": (stats.unmatched_evidence_facts),
+        "skipped_duplicate": stats.skipped_duplicate,
     }
 
 

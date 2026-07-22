@@ -202,6 +202,26 @@ def test_preparer_skips_answer_mismatch() -> None:
     assert preparer.stats.skipped_answer_mismatch == 1
 
 
+def test_preparer_skips_duplicate_examples() -> None:
+    preparer = make_preparer([make_finqa_record()])
+    raw_record = make_docfinqa_record()
+
+    items = list(
+        preparer.iter_prepare(
+            [
+                raw_record,
+                raw_record,
+            ]
+        )
+    )
+
+    assert len(items) == 1
+    assert preparer.stats.total_records == 2
+    assert preparer.stats.normalized_records == 1
+    assert preparer.stats.skipped_duplicate == 1
+    assert preparer.stats.skipped_records == 1
+
+
 def test_preparer_skips_incomplete_evidence() -> None:
     preparer = make_preparer(
         [
@@ -216,24 +236,6 @@ def test_preparer_skips_incomplete_evidence() -> None:
     assert items == []
     assert preparer.stats.skipped_evidence_incomplete == 1
     assert preparer.stats.unmatched_evidence_facts == 1
-
-
-def test_preparer_rejects_duplicate_example_ids() -> None:
-    preparer = make_preparer([make_finqa_record()])
-    raw_record = make_docfinqa_record()
-
-    with pytest.raises(
-        ValueError,
-        match="Duplicate DocFinQA example ID",
-    ):
-        list(
-            preparer.iter_prepare(
-                [
-                    raw_record,
-                    raw_record,
-                ]
-            )
-        )
 
 
 def test_preparer_rejects_empty_split() -> None:

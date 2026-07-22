@@ -4,12 +4,27 @@ import argparse
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from time import monotonic
 from typing import cast
 
 from document_rag.datasets.config import load_dataset_config
+from document_rag.datasets.docfinqa.chunking import (
+    DEFAULT_CHUNK_OVERLAP,
+    DEFAULT_CHUNK_SIZE,
+)
+from document_rag.datasets.docfinqa.service import (
+    DEFAULT_EVIDENCE_MINIMUM_SCORE,
+    DocFinQAProgressCallback,
+    DocFinQAProgressEvent,
+    DocFinQAProgressStage,
+    PreparedDocFinQASplitResult,
+    prepare_docfinqa_dataset,
+)
 from document_rag.datasets.finqa import prepare_finqa_dataset
 from document_rag.datasets.finqa.writer import WrittenFinQASplit
 from document_rag.datasets.models import DatasetName, DatasetSplit
+
+_DOCFINQA_PROGRESS_INTERVAL_SECONDS = 5.0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -28,7 +43,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="document-rag",
-        description="Auditable RAG for financial and business documents.",
+        description=("Auditable RAG for financial and business documents."),
     )
 
     commands = parser.add_subparsers(dest="command")
@@ -37,15 +52,17 @@ def _build_parser() -> argparse.ArgumentParser:
         "data",
         help="Prepare and validate datasets.",
     )
-    data_commands = data_parser.add_subparsers(dest="data_command")
+    data_commands = data_parser.add_subparsers(
+        dest="data_command",
+    )
 
     prepare_parser = data_commands.add_parser(
         "prepare",
-        help="Prepare a dataset in the normalized project format.",
+        help=("Prepare a dataset in the normalized project format."),
     )
     prepare_parser.add_argument(
         "--dataset",
-        choices=(DatasetName.FINQA.value,),
+        choices=tuple(dataset.value for dataset in DatasetName),
         required=True,
         help="Dataset to prepare.",
     )
@@ -53,13 +70,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "--config",
         type=Path,
         required=True,
-        help="Path to the dataset TOML configuration.",
+        help="Path to the primary dataset TOML configuration.",
     )
     prepare_parser.add_argument(
         "--source",
         type=Path,
         required=True,
-        help="Path to the cloned source dataset.",
+        help="Path to the primary source dataset.",
     )
     prepare_parser.add_argument(
         "--output",
@@ -78,29 +95,85 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    prepare_parser.add_argument(
+        "--finqa-config",
+        type=Path,
+        help=("Path to FinQA TOML configuration. Required when preparing DocFinQA."),
+    )
+    prepare_parser.add_argument(
+        "--finqa-source",
+        type=Path,
+        help=("Path to the FinQA source dataset. Required when preparing DocFinQA."),
+    )
+    prepare_parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=DEFAULT_CHUNK_SIZE,
+        help=(f"DocFinQA chunk size in characters. Default: {DEFAULT_CHUNK_SIZE}."),
+    )
+    prepare_parser.add_argument(
+        "--chunk-overlap",
+        type=int,
+        default=DEFAULT_CHUNK_OVERLAP,
+        help=(f"DocFinQA chunk overlap in characters. Default: {DEFAULT_CHUNK_OVERLAP}."),
+    )
+    prepare_parser.add_argument(
+        "--evidence-minimum-score",
+        type=float,
+        default=DEFAULT_EVIDENCE_MINIMUM_SCORE,
+        help=(
+            f"Minimum DocFinQA evidence matching score. Default: {DEFAULT_EVIDENCE_MINIMUM_SCORE}."
+        ),
+    )
+
     return parser
 
 
-def _run_data_prepare(arguments: argparse.Namespace) -> int:
-    dataset = cast(str, arguments.dataset)
+def _run_data_prepare(
+    arguments: argparse.Namespace,
+) -> int:
+    dataset = DatasetName(cast(str, arguments.dataset))
     config_path = cast(Path, arguments.config)
     source_directory = cast(Path, arguments.source)
     output_directory = cast(Path, arguments.output)
-    split_values = cast(list[str] | None, arguments.splits)
-
-    if dataset != DatasetName.FINQA.value:
-        print(
-            f"error: unsupported dataset: {dataset}",
-            file=sys.stderr,
-        )
-        return 1
-
-    splits = (
-        tuple(DatasetSplit(value) for value in split_values)
-        if split_values
-        else tuple(DatasetSplit)
+    split_values = cast(
+        list[str] | None,
+        arguments.splits,
     )
 
+    splits = _parse_splits(split_values)
+
+    if dataset is DatasetName.FINQA:
+        return _run_finqa_prepare(
+            config_path=config_path,
+            source_directory=source_directory,
+            output_directory=output_directory,
+            splits=splits,
+        )
+
+    if dataset is DatasetName.DOCFINQA:
+        return _run_docfinqa_prepare(
+            arguments=arguments,
+            config_path=config_path,
+            source_directory=source_directory,
+            output_directory=output_directory,
+            splits=splits,
+        )
+
+    print(
+        f"error: unsupported dataset: {dataset.value}",
+        file=sys.stderr,
+    )
+    return 1
+
+
+def _run_finqa_prepare(
+    *,
+    config_path: Path,
+    source_directory: Path,
+    output_directory: Path,
+    splits: tuple[DatasetSplit, ...],
+) -> int:
     try:
         config = load_dataset_config(config_path)
 
@@ -111,13 +184,16 @@ def _run_data_prepare(arguments: argparse.Namespace) -> int:
             splits=splits,
         )
     except (OSError, ValueError) as error:
-        print(f"error: {error}", file=sys.stderr)
+        print(
+            f"error: {error}",
+            file=sys.stderr,
+        )
         return 1
 
-    print(f"Prepared dataset: {dataset}")
+    print(f"Prepared dataset: {DatasetName.FINQA.value}")
 
     for written_split in result.splits:
-        _print_split(written_split)
+        _print_finqa_split(written_split)
 
     print(f"Manifest: {result.manifest.path}")
 
@@ -125,7 +201,7 @@ def _run_data_prepare(arguments: argparse.Namespace) -> int:
         print("Prepared deterministic sample:")
 
         for written_split in result.sample_splits:
-            _print_split(written_split)
+            _print_finqa_split(written_split)
 
         if result.sample_manifest is not None:
             print(f"Sample manifest: {result.sample_manifest.path}")
@@ -142,7 +218,146 @@ def _run_data_prepare(arguments: argparse.Namespace) -> int:
     return 0
 
 
-def _print_split(written_split: WrittenFinQASplit) -> None:
+def _run_docfinqa_prepare(
+    *,
+    arguments: argparse.Namespace,
+    config_path: Path,
+    source_directory: Path,
+    output_directory: Path,
+    splits: tuple[DatasetSplit, ...],
+) -> int:
+    finqa_config_path = cast(
+        Path | None,
+        arguments.finqa_config,
+    )
+    finqa_source_directory = cast(
+        Path | None,
+        arguments.finqa_source,
+    )
+
+    if finqa_config_path is None or finqa_source_directory is None:
+        missing_arguments: list[str] = []
+
+        if finqa_config_path is None:
+            missing_arguments.append("--finqa-config")
+
+        if finqa_source_directory is None:
+            missing_arguments.append("--finqa-source")
+
+        print(
+            "error: DocFinQA requires " + " and ".join(missing_arguments),
+            file=sys.stderr,
+        )
+        return 1
+
+    chunk_size = cast(int, arguments.chunk_size)
+    chunk_overlap = cast(
+        int,
+        arguments.chunk_overlap,
+    )
+    evidence_minimum_score = cast(
+        float,
+        arguments.evidence_minimum_score,
+    )
+
+    try:
+        docfinqa_config = load_dataset_config(config_path)
+        finqa_config = load_dataset_config(finqa_config_path)
+
+        split_names = ", ".join(
+            split.value for split in sorted(splits, key=lambda item: item.value)
+        )
+        print(
+            f"Preparing DocFinQA splits: {split_names}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+        result = prepare_docfinqa_dataset(
+            docfinqa_source_directory=(source_directory),
+            finqa_source_directory=(finqa_source_directory),
+            output_directory=output_directory,
+            docfinqa_config=docfinqa_config,
+            finqa_config=finqa_config,
+            splits=splits,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            evidence_minimum_score=(evidence_minimum_score),
+            progress_callback=_create_docfinqa_progress_reporter(),
+        )
+    except (OSError, ValueError) as error:
+        print(
+            f"error: {error}",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(f"Prepared dataset: {DatasetName.DOCFINQA.value}")
+
+    for split_result in result.splits:
+        _print_docfinqa_split(split_result)
+
+    print(f"Manifest: {result.manifest.path}")
+
+    return 0
+
+
+def _create_docfinqa_progress_reporter() -> DocFinQAProgressCallback:
+    last_reported_at: dict[DatasetSplit, float] = {}
+
+    def report(event: DocFinQAProgressEvent) -> None:
+        stats = event.stats
+
+        if event.stage is DocFinQAProgressStage.STARTED:
+            last_reported_at[event.split] = monotonic()
+            print(
+                f"[{event.split.value}] Starting preparation...",
+                file=sys.stderr,
+                flush=True,
+            )
+            return
+
+        if event.stage is DocFinQAProgressStage.COMPLETED:
+            print(
+                f"[{event.split.value}] Completed: "
+                f"{stats.total_records} records processed, "
+                f"{stats.normalized_records} normalized, "
+                f"{stats.skipped_records} skipped.",
+                file=sys.stderr,
+                flush=True,
+            )
+            return
+
+        current_time = monotonic()
+        previous_report_time = last_reported_at.get(event.split, current_time)
+
+        if current_time - previous_report_time < _DOCFINQA_PROGRESS_INTERVAL_SECONDS:
+            return
+
+        last_reported_at[event.split] = current_time
+        print(
+            f"[{event.split.value}] {stats.total_records} records processed, "
+            f"{stats.normalized_records} normalized, "
+            f"{stats.skipped_records} skipped...",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    return report
+
+
+def _parse_splits(
+    split_values: list[str] | None,
+) -> tuple[DatasetSplit, ...]:
+    if split_values:
+        return tuple(DatasetSplit(value) for value in split_values)
+
+    return tuple(DatasetSplit)
+
+
+def _print_finqa_split(
+    written_split: WrittenFinQASplit,
+) -> None:
     split = written_split.split
     documents = written_split.documents
     elements = written_split.elements
@@ -154,3 +369,27 @@ def _print_split(written_split: WrittenFinQASplit) -> None:
         f"{elements.record_count} elements, "
         f"{examples.record_count} examples"
     )
+
+
+def _print_docfinqa_split(
+    split_result: PreparedDocFinQASplitResult,
+) -> None:
+    written_split = split_result.written_split
+    stats = split_result.stats
+
+    print(
+        f"  {written_split.split.value}: "
+        f"{written_split.documents.record_count} documents, "
+        f"{written_split.elements.record_count} elements, "
+        f"{written_split.examples.record_count} examples"
+    )
+
+    if stats.skipped_records:
+        print(
+            "    skipped: "
+            f"{stats.skipped_records} total "
+            f"({stats.skipped_ambiguous} ambiguous, "
+            f"{stats.skipped_answer_mismatch} answer mismatch, "
+            f"{stats.skipped_evidence_incomplete} incomplete evidence, "
+            f"{stats.skipped_duplicate} duplicates)"
+        )

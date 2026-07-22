@@ -1,7 +1,8 @@
 """Application service for preparing DocFinQA dataset artifacts."""
 
-from collections.abc import Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 
 from document_rag.datasets.config import DatasetConfig
@@ -24,6 +25,9 @@ from document_rag.datasets.docfinqa.normalizer import (
 from document_rag.datasets.docfinqa.preparer import (
     DocFinQAPreparationStats,
     DocFinQASplitPreparer,
+)
+from document_rag.datasets.docfinqa.raw_models import (
+    DocFinQARawRecord,
 )
 from document_rag.datasets.docfinqa.reader import (
     DocFinQARawReader,
@@ -65,6 +69,26 @@ class DocFinQAPreparationResult:
     manifest: WrittenDocFinQAManifest
 
 
+class DocFinQAProgressStage(StrEnum):
+    """Stage represented by a DocFinQA progress event."""
+
+    STARTED = "started"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+
+
+@dataclass(frozen=True, slots=True)
+class DocFinQAProgressEvent:
+    """Current state of one DocFinQA split preparation."""
+
+    split: DatasetSplit
+    stage: DocFinQAProgressStage
+    stats: DocFinQAPreparationStats
+
+
+type DocFinQAProgressCallback = Callable[[DocFinQAProgressEvent], None]
+
+
 def prepare_docfinqa_dataset(
     *,
     docfinqa_source_directory: Path,
@@ -76,6 +100,7 @@ def prepare_docfinqa_dataset(
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
     evidence_minimum_score: float = (DEFAULT_EVIDENCE_MINIMUM_SCORE),
+    progress_callback: DocFinQAProgressCallback | None = None,
 ) -> DocFinQAPreparationResult:
     """Prepare deterministic DocFinQA artifacts.
 
@@ -126,13 +151,34 @@ def prepare_docfinqa_dataset(
             normalizer=normalizer,
         )
 
+        _report_progress(
+            progress_callback,
+            split=split,
+            stage=DocFinQAProgressStage.STARTED,
+            stats=preparer.stats,
+        )
+
+        raw_records = _iter_with_progress(
+            docfinqa_reader.iter_split(split),
+            split=split,
+            preparer=preparer,
+            progress_callback=progress_callback,
+        )
+
         written_split = write_docfinqa_split(
             output_directory=output_directory,
             split=split,
-            items=preparer.iter_prepare(docfinqa_reader.iter_split(split)),
+            items=preparer.iter_prepare(raw_records),
         )
 
         stats = preparer.stats
+
+        _report_progress(
+            progress_callback,
+            split=split,
+            stage=DocFinQAProgressStage.COMPLETED,
+            stats=stats,
+        )
 
         split_result = PreparedDocFinQASplitResult(
             written_split=written_split,
@@ -159,6 +205,43 @@ def prepare_docfinqa_dataset(
     return DocFinQAPreparationResult(
         splits=tuple(prepared_results),
         manifest=manifest,
+    )
+
+
+def _iter_with_progress(
+    raw_records: Iterable[DocFinQARawRecord],
+    *,
+    split: DatasetSplit,
+    preparer: DocFinQASplitPreparer,
+    progress_callback: DocFinQAProgressCallback | None,
+) -> Iterator[DocFinQARawRecord]:
+    for raw_record in raw_records:
+        yield raw_record
+
+        _report_progress(
+            progress_callback,
+            split=split,
+            stage=DocFinQAProgressStage.PROCESSING,
+            stats=preparer.stats,
+        )
+
+
+def _report_progress(
+    progress_callback: DocFinQAProgressCallback | None,
+    *,
+    split: DatasetSplit,
+    stage: DocFinQAProgressStage,
+    stats: DocFinQAPreparationStats,
+) -> None:
+    if progress_callback is None:
+        return
+
+    progress_callback(
+        DocFinQAProgressEvent(
+            split=split,
+            stage=stage,
+            stats=stats,
+        )
     )
 
 

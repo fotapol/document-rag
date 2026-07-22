@@ -70,6 +70,7 @@ def make_split_input(
     total_records: int = 12,
     normalized_records: int = 10,
     unique_documents: int = 4,
+    skipped_duplicate: int = 0,
 ) -> DocFinQASplitManifestInput:
     split_directory = output_directory / split.value
 
@@ -97,11 +98,12 @@ def make_split_input(
         normalized_records=normalized_records,
         unique_documents=unique_documents,
         exact_links=9,
-        equivalent_links=2,
+        equivalent_links=2 + skipped_duplicate,
         skipped_ambiguous=1,
         skipped_answer_mismatch=0,
         skipped_evidence_incomplete=1,
         unmatched_evidence_facts=1,
+        skipped_duplicate=skipped_duplicate,
     )
 
     return DocFinQASplitManifestInput(
@@ -113,7 +115,11 @@ def make_split_input(
 def test_manifest_contains_source_artifacts_and_stats(
     tmp_path: Path,
 ) -> None:
-    split_input = make_split_input(tmp_path)
+    split_input = make_split_input(
+        tmp_path,
+        total_records=13,
+        skipped_duplicate=1,
+    )
 
     result = write_docfinqa_manifest(
         output_directory=tmp_path,
@@ -144,7 +150,8 @@ def test_manifest_contains_source_artifacts_and_stats(
     assert train["artifacts"]["elements"]["record_count"] == 20
     assert train["artifacts"]["examples"]["record_count"] == 10
 
-    assert train["statistics"]["skipped_records"] == 2
+    assert train["statistics"]["skipped_records"] == 3
+    assert train["statistics"]["skipped_duplicate"] == 1
     assert len(result.sha256) == 64
 
 
