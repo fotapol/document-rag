@@ -8,6 +8,12 @@ from document_rag.datasets.docfinqa.evidence import (
     DocFinQAEvidenceMatch,
     DocFinQAEvidenceSelector,
 )
+from document_rag.datasets.docfinqa.integrity import (
+    DocFinQADocumentOverlap,
+    DocFinQAIntegrityReport,
+    DocFinQASplitIntegritySnapshot,
+    validate_docfinqa_output,
+)
 from document_rag.datasets.docfinqa.linkage import (
     DocFinQALinker,
     DocFinQALinkResult,
@@ -60,8 +66,10 @@ __all__ = [
     "DEFAULT_EVIDENCE_MINIMUM_SCORE",
     "DocFinQAChunk",
     "DocFinQAChunker",
+    "DocFinQADocumentOverlap",
     "DocFinQAEvidenceMatch",
     "DocFinQAEvidenceSelector",
+    "DocFinQAIntegrityReport",
     "DocFinQALinkResult",
     "DocFinQALinkStatus",
     "DocFinQALinker",
@@ -75,6 +83,7 @@ __all__ = [
     "DocFinQAProgressStage",
     "DocFinQARawReader",
     "DocFinQARawRecord",
+    "DocFinQASplitIntegritySnapshot",
     "DocFinQASplitManifestInput",
     "DocFinQASplitPreparer",
     "NormalizedDocFinQAElement",
@@ -88,6 +97,7 @@ __all__ = [
     "WrittenDocFinQAManifest",
     "WrittenDocFinQASplit",
     "prepare_docfinqa_dataset",
+    "validate_docfinqa_output",
     "write_docfinqa_manifest",
     "write_docfinqa_split",
 ]
