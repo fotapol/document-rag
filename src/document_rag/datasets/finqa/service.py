@@ -3,6 +3,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from document_rag.datasets.config import DatasetConfig
+from document_rag.datasets.finqa.integrity import (
+    ReportOverlap,
+    SplitIntegritySnapshot,
+    build_split_integrity_snapshot,
+    validate_cross_split_integrity,
+)
 from document_rag.datasets.finqa.manifest import (
     WrittenManifest,
     write_finqa_manifest,
@@ -16,12 +22,6 @@ from document_rag.datasets.finqa.sample import create_finqa_sample
 from document_rag.datasets.finqa.writer import (
     WrittenFinQASplit,
     write_finqa_split,
-)
-from document_rag.datasets.integrity import (
-    ReportOverlap,
-    SplitIntegritySnapshot,
-    build_split_integrity_snapshot,
-    validate_cross_split_integrity,
 )
 from document_rag.datasets.models import DatasetName, DatasetSplit
 

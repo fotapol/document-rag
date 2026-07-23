@@ -10,7 +10,7 @@ from document_rag.datasets import (
     SupportingFact,
 )
 from document_rag.datasets.finqa import PreparedFinQASplit
-from document_rag.datasets.integrity import (
+from document_rag.datasets.finqa.integrity import (
     build_split_integrity_snapshot,
     validate_cross_split_integrity,
 )
