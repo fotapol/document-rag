@@ -18,9 +18,7 @@ from document_rag.datasets.docfinqa.writer import (
     WrittenDocFinQAArtifact,
     WrittenDocFinQASplit,
 )
-from document_rag.datasets.models import (
-    DatasetName,
-)
+from document_rag.datasets.models import DatasetName
 
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
@@ -49,6 +47,7 @@ def write_docfinqa_manifest(
     chunk_size: int,
     chunk_overlap: int,
     evidence_minimum_score: float,
+    sample_documents_per_split: int | None = None,
 ) -> WrittenDocFinQAManifest:
     """Write a deterministic manifest for prepared DocFinQA data."""
 
@@ -64,11 +63,11 @@ def write_docfinqa_manifest(
     if not 0.0 < evidence_minimum_score <= 1.0:
         raise ValueError("Evidence minimum score must be greater than 0 and no greater than 1")
 
+    if sample_documents_per_split is not None and sample_documents_per_split <= 0:
+        raise ValueError("Sample documents per split must be positive")
+
     resolved_output_directory = output_directory.resolve()
-    resolved_output_directory.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+    resolved_output_directory.mkdir(parents=True, exist_ok=True)
 
     ordered_inputs = sorted(
         split_inputs,
@@ -113,7 +112,7 @@ def write_docfinqa_manifest(
             "statistics": _serialize_stats(stats),
         }
 
-    payload = {
+    payload: dict[str, Any] = {
         "dataset": DatasetName.DOCFINQA.value,
         "schema_version": config.schema_version,
         "source": {
@@ -124,10 +123,17 @@ def write_docfinqa_manifest(
             "chunk_overlap": chunk_overlap,
             "chunk_size": chunk_size,
             "chunk_stride": chunk_size - chunk_overlap,
-            "evidence_minimum_score": (evidence_minimum_score),
+            "evidence_minimum_score": evidence_minimum_score,
         },
         "splits": split_payloads,
     }
+
+    if sample_documents_per_split is not None:
+        payload["sample"] = {
+            "kind": "development_subset",
+            "requested_documents_per_split": sample_documents_per_split,
+            "selection": "sha256(document_id)",
+        }
 
     manifest_bytes = (
         json.dumps(
@@ -181,7 +187,6 @@ def _validate_split(
         raise ValueError("Unique document count does not match written documents")
 
     linked_records = stats.exact_links + stats.equivalent_links
-
     accepted_or_evidence_skipped = (
         stats.normalized_records + stats.skipped_evidence_incomplete + stats.skipped_duplicate
     )
@@ -234,13 +239,13 @@ def _serialize_stats(
         "exact_links": stats.exact_links,
         "normalized_records": stats.normalized_records,
         "skipped_ambiguous": stats.skipped_ambiguous,
-        "skipped_answer_mismatch": (stats.skipped_answer_mismatch),
+        "skipped_answer_mismatch": stats.skipped_answer_mismatch,
+        "skipped_duplicate": stats.skipped_duplicate,
         "skipped_evidence_incomplete": (stats.skipped_evidence_incomplete),
         "skipped_records": stats.skipped_records,
         "total_records": stats.total_records,
         "unique_documents": stats.unique_documents,
-        "unmatched_evidence_facts": (stats.unmatched_evidence_facts),
-        "skipped_duplicate": stats.skipped_duplicate,
+        "unmatched_evidence_facts": stats.unmatched_evidence_facts,
     }
 
 
@@ -261,12 +266,7 @@ def _write_atomically(
         temporary_file.flush()
 
     try:
-        os.replace(
-            temporary_path,
-            path,
-        )
+        os.replace(temporary_path, path)
     except Exception:
-        temporary_path.unlink(
-            missing_ok=True,
-        )
+        temporary_path.unlink(missing_ok=True)
         raise

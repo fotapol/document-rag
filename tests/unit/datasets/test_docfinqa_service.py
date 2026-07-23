@@ -199,6 +199,16 @@ def test_service_prepares_selected_split(
     assert progress_events[0].stats.total_records == 0
     assert progress_events[1].stats.total_records == 1
     assert progress_events[2].stats.normalized_records == 1
+    assert len(result.sample_splits) == 1
+
+    sample_split = result.sample_splits[0]
+
+    assert sample_split.split is DatasetSplit.TRAIN
+    assert sample_split.documents.record_count == 1
+    assert sample_split.elements.record_count == 1
+    assert sample_split.examples.record_count == 1
+
+    assert result.sample_manifest.path.is_file()
 
 
 def test_service_is_deterministic(
@@ -259,6 +269,29 @@ def test_service_is_deterministic(
     for first_artifact, second_artifact in artifact_pairs:
         assert first_artifact.sha256 == second_artifact.sha256
         assert first_artifact.path.read_bytes() == second_artifact.path.read_bytes()
+
+    assert first_result.sample_manifest.sha256 == second_result.sample_manifest.sha256
+
+    first_sample = first_result.sample_splits[0]
+    second_sample = second_result.sample_splits[0]
+
+    sample_artifact_pairs = (
+        (
+            first_sample.documents,
+            second_sample.documents,
+        ),
+        (
+            first_sample.elements,
+            second_sample.elements,
+        ),
+        (
+            first_sample.examples,
+            second_sample.examples,
+        ),
+    )
+
+    for first_artifact, second_artifact in sample_artifact_pairs:
+        assert first_artifact.sha256 == second_artifact.sha256
 
 
 def test_service_orders_selected_splits(

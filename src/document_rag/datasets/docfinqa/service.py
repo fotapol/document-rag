@@ -19,30 +19,23 @@ from document_rag.datasets.docfinqa.manifest import (
     WrittenDocFinQAManifest,
     write_docfinqa_manifest,
 )
-from document_rag.datasets.docfinqa.normalizer import (
-    DocFinQANormalizer,
-)
+from document_rag.datasets.docfinqa.normalizer import DocFinQANormalizer
 from document_rag.datasets.docfinqa.preparer import (
     DocFinQAPreparationStats,
     DocFinQASplitPreparer,
 )
-from document_rag.datasets.docfinqa.raw_models import (
-    DocFinQARawRecord,
-)
-from document_rag.datasets.docfinqa.reader import (
-    DocFinQARawReader,
+from document_rag.datasets.docfinqa.raw_models import DocFinQARawRecord
+from document_rag.datasets.docfinqa.reader import DocFinQARawReader
+from document_rag.datasets.docfinqa.sample import (
+    DEFAULT_SAMPLE_DOCUMENTS_PER_SPLIT,
+    create_docfinqa_sample,
 )
 from document_rag.datasets.docfinqa.writer import (
     WrittenDocFinQASplit,
     write_docfinqa_split,
 )
-from document_rag.datasets.finqa.reader import (
-    FinQARawReader,
-)
-from document_rag.datasets.models import (
-    DatasetName,
-    DatasetSplit,
-)
+from document_rag.datasets.finqa.reader import FinQARawReader
+from document_rag.datasets.models import DatasetName, DatasetSplit
 
 DEFAULT_EVIDENCE_MINIMUM_SCORE = 0.6
 
@@ -63,10 +56,12 @@ class PreparedDocFinQASplitResult:
 
 @dataclass(frozen=True, slots=True)
 class DocFinQAPreparationResult:
-    """Complete result of preparing one or more DocFinQA splits."""
+    """Complete result of preparing DocFinQA."""
 
     splits: tuple[PreparedDocFinQASplitResult, ...]
     manifest: WrittenDocFinQAManifest
+    sample_splits: tuple[WrittenDocFinQASplit, ...]
+    sample_manifest: WrittenDocFinQAManifest
 
 
 class DocFinQAProgressStage(StrEnum):
@@ -99,24 +94,20 @@ def prepare_docfinqa_dataset(
     splits: Sequence[DatasetSplit] = _DEFAULT_SPLITS,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
-    evidence_minimum_score: float = (DEFAULT_EVIDENCE_MINIMUM_SCORE),
+    evidence_minimum_score: float = DEFAULT_EVIDENCE_MINIMUM_SCORE,
+    sample_documents_per_split: int = (DEFAULT_SAMPLE_DOCUMENTS_PER_SPLIT),
     progress_callback: DocFinQAProgressCallback | None = None,
 ) -> DocFinQAPreparationResult:
-    """Prepare deterministic DocFinQA artifacts.
-
-    DocFinQA reports are streamed one record at a time. FinQA
-    annotations are loaded split-by-split because they are small and
-    are required to build the question-answer linkage index.
-
-    Records with ambiguous FinQA linkage, answer mismatch or incomplete
-    evidence are skipped and counted in the manifest.
-    """
+    """Prepare full DocFinQA artifacts and a development subset."""
 
     if docfinqa_config.name is not DatasetName.DOCFINQA:
         raise ValueError("DocFinQA preparation requires a DocFinQA configuration")
 
     if finqa_config.name is not DatasetName.FINQA:
         raise ValueError("DocFinQA preparation requires a FinQA configuration")
+
+    if sample_documents_per_split <= 0:
+        raise ValueError("Sample documents per split must be positive")
 
     selected_splits = _validate_splits(splits)
 
@@ -180,11 +171,11 @@ def prepare_docfinqa_dataset(
             stats=stats,
         )
 
-        split_result = PreparedDocFinQASplitResult(
+        prepared_result = PreparedDocFinQASplitResult(
             written_split=written_split,
             stats=stats,
         )
-        prepared_results.append(split_result)
+        prepared_results.append(prepared_result)
 
         manifest_inputs.append(
             DocFinQASplitManifestInput(
@@ -202,9 +193,22 @@ def prepare_docfinqa_dataset(
         evidence_minimum_score=evidence_minimum_score,
     )
 
+    sample_result = create_docfinqa_sample(
+        input_directory=output_directory,
+        output_directory=output_directory / "sample",
+        config=docfinqa_config,
+        splits=selected_splits,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        evidence_minimum_score=evidence_minimum_score,
+        documents_per_split=sample_documents_per_split,
+    )
+
     return DocFinQAPreparationResult(
         splits=tuple(prepared_results),
         manifest=manifest,
+        sample_splits=sample_result.splits,
+        sample_manifest=sample_result.manifest,
     )
 
 

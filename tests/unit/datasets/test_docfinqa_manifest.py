@@ -327,3 +327,27 @@ def test_manifest_rejects_empty_split_list(
             chunk_overlap=550,
             evidence_minimum_score=0.6,
         )
+
+
+def test_manifest_records_sample_configuration(
+    tmp_path: Path,
+) -> None:
+    split_input = make_split_input(tmp_path)
+
+    result = write_docfinqa_manifest(
+        output_directory=tmp_path,
+        config=make_config(),
+        split_inputs=[split_input],
+        chunk_size=2_750,
+        chunk_overlap=550,
+        evidence_minimum_score=0.6,
+        sample_documents_per_split=5,
+    )
+
+    payload = json.loads(result.path.read_text(encoding="utf-8"))
+
+    assert payload["sample"] == {
+        "kind": "development_subset",
+        "requested_documents_per_split": 5,
+        "selection": "sha256(document_id)",
+    }
