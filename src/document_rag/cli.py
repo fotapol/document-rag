@@ -12,6 +12,9 @@ from document_rag.datasets.docfinqa.chunking import (
     DEFAULT_CHUNK_OVERLAP,
     DEFAULT_CHUNK_SIZE,
 )
+from document_rag.datasets.docfinqa.integrity import (
+    validate_docfinqa_output,
+)
 from document_rag.datasets.docfinqa.service import (
     DEFAULT_EVIDENCE_MINIMUM_SCORE,
     DocFinQAProgressCallback,
@@ -35,6 +38,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if arguments.command == "data" and arguments.data_command == "prepare":
         return _run_data_prepare(arguments)
+
+    if arguments.command == "data" and arguments.data_command == "validate":
+        return _run_data_validate(arguments)
 
     parser.error("A command is required")
     return 2
@@ -125,7 +131,23 @@ def _build_parser() -> argparse.ArgumentParser:
             f"Minimum DocFinQA evidence matching score. Default: {DEFAULT_EVIDENCE_MINIMUM_SCORE}."
         ),
     )
-
+    validate_parser = data_commands.add_parser(
+        "validate",
+        help="Validate prepared dataset artifacts.",
+    )
+    validate_parser.add_argument(
+        "--dataset",
+        choices=(DatasetName.DOCFINQA.value,),
+        required=True,
+        help="Prepared dataset to validate.",
+    )
+    validate_parser.add_argument(
+        "--input",
+        dest="input_directory",
+        type=Path,
+        required=True,
+        help=("Directory containing manifest.json and normalized artifacts."),
+    )
     return parser
 
 
@@ -393,3 +415,50 @@ def _print_docfinqa_split(
             f"{stats.skipped_evidence_incomplete} incomplete evidence, "
             f"{stats.skipped_duplicate} duplicates)"
         )
+
+
+def _run_data_validate(
+    arguments: argparse.Namespace,
+) -> int:
+    dataset = DatasetName(cast(str, arguments.dataset))
+    input_directory = cast(
+        Path,
+        arguments.input_directory,
+    )
+
+    if dataset is not DatasetName.DOCFINQA:
+        print(
+            f"error: integrity validation is not implemented for dataset: {dataset.value}",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        report = validate_docfinqa_output(input_directory)
+    except (OSError, ValueError) as error:
+        print(
+            f"error: {error}",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(f"Validated dataset: {dataset.value}")
+
+    for snapshot in report.splits:
+        print(
+            f"  {snapshot.split.value}: "
+            f"{len(snapshot.document_ids)} documents, "
+            f"{len(snapshot.element_ids)} elements, "
+            f"{len(snapshot.example_ids)} examples"
+        )
+
+    for overlap in report.document_overlaps:
+        print(
+            "Warning: "
+            f"{overlap.count} documents are shared between "
+            f"{overlap.left_split.value} and "
+            f"{overlap.right_split.value}",
+            file=sys.stderr,
+        )
+
+    return 0
