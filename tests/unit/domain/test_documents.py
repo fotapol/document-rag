@@ -72,3 +72,17 @@ def test_paragraph_rejects_table_coordinates() -> None:
             page_number=14,
             table_coordinates=TableCoordinates(table_id="table-1"),
         )
+
+
+def test_document_element_preserves_exact_source_text() -> None:
+    source_text = "  Revenue increased.\n"
+
+    element = DocumentElement(
+        element_id="paragraph-1",
+        document_id="report",
+        element_type=DocumentElementType.PARAGRAPH,
+        source_text=source_text,
+        page_number=1,
+    )
+
+    assert element.source_text == source_text

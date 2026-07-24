@@ -109,20 +109,22 @@ def test_normalizer_builds_complete_record() -> None:
 
     record = result.record
 
-    assert record.split is DatasetSplit.TRAIN
-    assert record.finqa_id == finqa_record.id
-    assert record.question == "What was the revenue?"
-    assert record.answer == "100"
-    assert record.program == "answer = 100"
+    assert record.example.split is DatasetSplit.TRAIN
+    assert record.example.question.metadata["source_example_id"] == finqa_record.id
+    assert record.example.question.text == "What was the revenue?"
+    assert record.example.reference_answer.text == "100"
+    assert record.example.reference_answer.program == "answer = 100"
 
-    assert record.document_id.startswith("docfinqa:document:")
-    assert record.example_id.startswith("docfinqa:example:")
+    assert record.document.document_id.startswith("docfinqa:document:")
+    assert record.example.example_id.startswith("docfinqa:example:")
+    assert record.example.question.question_id == record.example.example_id
+    assert record.example.question.document_id == record.document.document_id
 
     assert len(record.elements) == 1
-    assert len(record.supporting_facts) == 1
+    assert len(record.example.supporting_facts) == 1
 
-    assert record.supporting_facts[0].element_id == record.elements[0].element_id
-    assert record.supporting_facts[0].source_key == "text_1"
+    assert record.example.supporting_facts[0].element_id == record.elements[0].element_id
+    assert record.example.supporting_facts[0].source_key == "text_1"
 
 
 def test_normalizer_preserves_exact_chunk_text() -> None:
@@ -146,7 +148,7 @@ def test_normalizer_converts_blank_program_to_none() -> None:
     )
 
     assert result.record is not None
-    assert result.record.program is None
+    assert result.record.example.reference_answer.program is None
 
 
 def test_normalizer_returns_unlinked_result() -> None:
@@ -249,5 +251,5 @@ def test_same_document_has_stable_document_id() -> None:
     assert first_result.record is not None
     assert second_result.record is not None
 
-    assert first_result.record.document_id == second_result.record.document_id
-    assert first_result.record.example_id != second_result.record.example_id
+    assert first_result.record.document.document_id == second_result.record.document.document_id
+    assert first_result.record.example.example_id != second_result.record.example.example_id

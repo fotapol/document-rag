@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
+
+from pydantic import BaseModel, ValidationError
 
 from document_rag.datasets.config import DatasetConfig
 from document_rag.datasets.docfinqa.manifest import (
@@ -22,7 +24,12 @@ from document_rag.datasets.docfinqa.writer import (
     WrittenDocFinQAArtifact,
     WrittenDocFinQASplit,
 )
-from document_rag.datasets.models import DatasetName, DatasetSplit
+from document_rag.datasets.models import (
+    DatasetExample,
+    DatasetName,
+    DatasetSplit,
+)
+from document_rag.domain import Document, DocumentElement
 
 DEFAULT_SAMPLE_DOCUMENTS_PER_SPLIT = 5
 
@@ -40,6 +47,7 @@ def create_docfinqa_sample(
     input_directory: Path,
     output_directory: Path,
     config: DatasetConfig,
+    finqa_config: DatasetConfig,
     splits: Sequence[DatasetSplit],
     chunk_size: int,
     chunk_overlap: int,
@@ -144,13 +152,13 @@ def create_docfinqa_sample(
         selected_elements.sort(
             key=lambda record: (
                 document_order[cast(str, record["document_id"])],
-                cast(int, record["index"]),
+                _element_chunk_index(record),
                 cast(str, record["element_id"]),
             )
         )
         selected_examples.sort(
             key=lambda record: (
-                document_order[cast(str, record["document_id"])],
+                document_order[_example_document_id(record)],
                 cast(str, record["example_id"]),
             )
         )
@@ -176,9 +184,9 @@ def create_docfinqa_sample(
             examples=examples_artifact,
         )
 
-        exact_links = sum(record.get("link_status") == "exact" for record in selected_examples)
+        exact_links = sum(_example_link_status(record) == "exact" for record in selected_examples)
         equivalent_links = sum(
-            record.get("link_status") == "equivalent" for record in selected_examples
+            _example_link_status(record) == "equivalent" for record in selected_examples
         )
 
         stats = DocFinQAPreparationStats(
@@ -205,6 +213,7 @@ def create_docfinqa_sample(
     manifest = write_docfinqa_manifest(
         output_directory=output_root,
         config=config,
+        finqa_config=finqa_config,
         split_inputs=manifest_inputs,
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
@@ -227,18 +236,20 @@ def _select_documents(
     documents: dict[str, dict[str, Any]] = {}
 
     for line_number, record in _iter_json_objects(path):
-        if record.get("dataset") != DatasetName.DOCFINQA.value:
-            raise ValueError(f"{path} line {line_number}: dataset must be 'docfinqa'")
-
-        if record.get("split") != split.value:
-            raise ValueError(f"{path} line {line_number}: split does not match artifact")
-
-        document_id = _require_nonempty_string(
+        document = _validate_domain_model(
+            Document,
             record,
-            "document_id",
             path=path,
             line_number=line_number,
         )
+
+        if document.metadata.get("dataset") != DatasetName.DOCFINQA.value:
+            raise ValueError(f"{path} line {line_number}: dataset must be 'docfinqa'")
+
+        if document.metadata.get("split") != split.value:
+            raise ValueError(f"{path} line {line_number}: split does not match artifact")
+
+        document_id = document.document_id
 
         if document_id in documents:
             raise ValueError(f"{path} line {line_number}: duplicate document ID {document_id!r}")
@@ -265,46 +276,22 @@ def _select_elements(
     seen_element_ids: set[str] = set()
 
     for line_number, record in _iter_json_objects(path):
-        document_id = _require_nonempty_string(
+        element = _validate_domain_model(
+            DocumentElement,
             record,
-            "document_id",
             path=path,
             line_number=line_number,
         )
+        document_id = element.document_id
 
         if document_id not in selected_document_ids:
             continue
 
-        element_id = _require_nonempty_string(
-            record,
-            "element_id",
-            path=path,
-            line_number=line_number,
-        )
-        index = _require_integer(
-            record,
-            "index",
-            path=path,
-            line_number=line_number,
-        )
-        start_char = _require_integer(
-            record,
-            "start_char",
-            path=path,
-            line_number=line_number,
-        )
-        end_char = _require_integer(
-            record,
-            "end_char",
-            path=path,
-            line_number=line_number,
-        )
-        source_text = _require_string(
-            record,
-            "source_text",
-            path=path,
-            line_number=line_number,
-        )
+        element_id = element.element_id
+        index = _metadata_integer(element.metadata, "chunk_index", path, line_number)
+        start_char = _metadata_integer(element.metadata, "start_char", path, line_number)
+        end_char = _metadata_integer(element.metadata, "end_char", path, line_number)
+        source_text = element.source_text
 
         if element_id in seen_element_ids:
             raise ValueError(f"{path} line {line_number}: duplicate element ID {element_id!r}")
@@ -336,55 +323,35 @@ def _select_examples(
     seen_example_ids: set[str] = set()
 
     for line_number, record in _iter_json_objects(path):
-        document_id = _require_nonempty_string(
+        example = _validate_domain_model(
+            DatasetExample,
             record,
-            "document_id",
             path=path,
             line_number=line_number,
         )
+        document_id = example.question.document_id
 
         if document_id not in selected_document_ids:
             continue
 
-        if record.get("dataset") != DatasetName.DOCFINQA.value:
+        if example.dataset is not DatasetName.DOCFINQA:
             raise ValueError(f"{path} line {line_number}: dataset must be 'docfinqa'")
 
-        if record.get("split") != split.value:
+        if example.split is not split:
             raise ValueError(f"{path} line {line_number}: split does not match artifact")
 
-        example_id = _require_nonempty_string(
-            record,
-            "example_id",
-            path=path,
-            line_number=line_number,
-        )
-        _require_nonempty_string(
-            record,
-            "question",
-            path=path,
-            line_number=line_number,
-        )
-        _require_nonempty_string(
-            record,
-            "answer",
-            path=path,
-            line_number=line_number,
-        )
+        example_id = example.example_id
+
+        if example.question.question_id != example_id:
+            raise ValueError(f"{path} line {line_number}: question ID does not match example ID")
 
         if example_id in seen_example_ids:
             raise ValueError(f"{path} line {line_number}: duplicate example ID {example_id!r}")
 
-        link_status = record.get("link_status")
+        link_status = example.question.metadata.get("link_status")
 
         if link_status not in {"exact", "equivalent"}:
             raise ValueError(f"{path} line {line_number}: invalid accepted link status")
-
-        supporting_facts = record.get("supporting_facts")
-
-        if not isinstance(supporting_facts, list) or not supporting_facts:
-            raise ValueError(
-                f"{path} line {line_number}: supporting_facts must be a non-empty list"
-            )
 
         seen_example_ids.add(example_id)
         selected.append(record)
@@ -403,7 +370,7 @@ def _validate_selected_records(
     element_ids = {cast(str, element["element_id"]) for element in elements}
 
     element_documents = {cast(str, element["document_id"]) for element in elements}
-    example_documents = {cast(str, example["document_id"]) for example in examples}
+    example_documents = {_example_document_id(example) for example in examples}
 
     missing_element_documents = document_id_set - element_documents
 
@@ -516,6 +483,73 @@ def _document_selection_key(document_id: str) -> tuple[bytes, str]:
         sha256(document_id.encode("utf-8")).digest(),
         document_id,
     )
+
+
+def _element_chunk_index(record: dict[str, Any]) -> int:
+    metadata = _require_mapping(
+        record.get("metadata"),
+        label="element metadata",
+    )
+    value = metadata.get("chunk_index")
+
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("Element chunk index must be an integer")
+
+    return value
+
+
+def _example_document_id(record: dict[str, Any]) -> str:
+    question = _require_mapping(
+        record.get("question"),
+        label="example question",
+    )
+    value = question.get("document_id")
+
+    if not isinstance(value, str) or not value:
+        raise ValueError("Example question document ID must be a non-empty string")
+
+    return value
+
+
+def _example_link_status(record: dict[str, Any]) -> object:
+    question = _require_mapping(
+        record.get("question"),
+        label="example question",
+    )
+    metadata = _require_mapping(
+        question.get("metadata"),
+        label="question metadata",
+    )
+    return metadata.get("link_status")
+
+
+def _metadata_integer(
+    metadata: Mapping[str, object],
+    key: str,
+    path: Path,
+    line_number: int,
+) -> int:
+    value = metadata.get(key)
+
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{path} line {line_number}: metadata {key!r} must be an integer")
+
+    return value
+
+
+def _validate_domain_model[ModelT: BaseModel](
+    model_type: type[ModelT],
+    record: dict[str, Any],
+    *,
+    path: Path,
+    line_number: int,
+) -> ModelT:
+    try:
+        return model_type.model_validate(record)
+    except ValidationError as error:
+        raise ValueError(
+            f"{path} line {line_number}: invalid {model_type.__name__} domain model"
+        ) from error
 
 
 def _artifact_path(

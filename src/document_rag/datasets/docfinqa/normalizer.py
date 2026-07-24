@@ -12,12 +12,23 @@ from document_rag.datasets.docfinqa.evidence import (
 )
 from document_rag.datasets.docfinqa.linkage import (
     DocFinQALinkResult,
-    DocFinQALinkStatus,
 )
 from document_rag.datasets.docfinqa.raw_models import (
     DocFinQARawRecord,
 )
-from document_rag.datasets.models import DatasetSplit
+from document_rag.datasets.models import (
+    DatasetExample,
+    DatasetName,
+    DatasetSplit,
+    ReferenceAnswer,
+    SupportingFact,
+)
+from document_rag.domain import (
+    Document,
+    DocumentElement,
+    DocumentElementType,
+    Question,
+)
 
 _ID_DIGEST_LENGTH = 32
 
@@ -30,45 +41,17 @@ class DocFinQANormalizationStatus(StrEnum):
     EVIDENCE_INCOMPLETE = "evidence_incomplete"
 
 
-@dataclass(frozen=True, slots=True)
-class NormalizedDocFinQAElement:
-    """One normalized retrieval element from a full report."""
-
-    element_id: str
-    document_id: str
-    index: int
-    start_char: int
-    end_char: int
-    source_text: str
-
-
-@dataclass(frozen=True, slots=True)
-class NormalizedDocFinQASupportingFact:
-    """A gold FinQA fact linked to a DocFinQA element."""
-
-    source_key: str
-    element_id: str
-    score: float
+NormalizedDocFinQAElement = DocumentElement
+NormalizedDocFinQASupportingFact = SupportingFact
 
 
 @dataclass(frozen=True, slots=True)
 class NormalizedDocFinQARecord:
-    """One fully normalized DocFinQA training example."""
+    """One DocFinQA record normalized into shared domain models."""
 
-    split: DatasetSplit
-    document_id: str
-    example_id: str
-    finqa_id: str
-    finqa_source_file: str
-    link_status: DocFinQALinkStatus
-    question: str
-    answer: str
-    program: str | None
-    elements: tuple[NormalizedDocFinQAElement, ...]
-    supporting_facts: tuple[
-        NormalizedDocFinQASupportingFact,
-        ...,
-    ]
+    document: Document
+    elements: tuple[DocumentElement, ...]
+    example: DatasetExample
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,26 +123,53 @@ class DocFinQANormalizer:
         document_id = _build_document_id(raw_record.context)
         chunking_strategy = f"char-{self._chunker.chunk_size}-{self._chunker.overlap}"
 
+        document = Document(
+            document_id=document_id,
+            file_name=f"{document_id.rsplit(':', maxsplit=1)[-1]}.txt",
+            mime_type="text/plain",
+            checksum_sha256=sha256(raw_record.context.encode("utf-8")).hexdigest(),
+            page_count=1,
+            metadata={
+                "dataset": DatasetName.DOCFINQA.value,
+                "split": split.value,
+                "pagination": "unavailable",
+            },
+        )
+
         elements = tuple(
-            NormalizedDocFinQAElement(
+            DocumentElement(
                 element_id=_build_element_id(
                     document_id=document_id,
                     chunking_strategy=chunking_strategy,
                     chunk_index=chunk.index,
                 ),
                 document_id=document_id,
-                index=chunk.index,
-                start_char=chunk.start_char,
-                end_char=chunk.end_char,
+                element_type=DocumentElementType.PARAGRAPH,
                 source_text=chunk.text,
+                page_number=1,
+                metadata={
+                    "dataset": DatasetName.DOCFINQA.value,
+                    "split": split.value,
+                    "chunk_index": chunk.index,
+                    "start_char": chunk.start_char,
+                    "end_char": chunk.end_char,
+                    "chunking_strategy": chunking_strategy,
+                },
             )
             for chunk in chunks
         )
 
-        element_ids_by_index = {element.index: element.element_id for element in elements}
+        element_ids_by_index = {
+            chunk.index: element.element_id
+            for chunk, element in zip(
+                chunks,
+                elements,
+                strict=True,
+            )
+        }
 
         supporting_facts = tuple(
-            NormalizedDocFinQASupportingFact(
+            SupportingFact(
                 source_key=match.source_key,
                 element_id=element_ids_by_index[match.chunk_index],
                 score=match.score,
@@ -178,18 +188,34 @@ class DocFinQANormalizer:
             program=program,
         )
 
-        normalized_record = NormalizedDocFinQARecord(
-            split=split,
+        normalized_question = Question(
+            question_id=example_id,
             document_id=document_id,
+            text=question,
+            metadata={
+                "dataset": DatasetName.DOCFINQA.value,
+                "source_example_id": finqa_record.id,
+                "source_file": finqa_record.filename,
+                "link_status": link_result.status.value,
+            },
+        )
+
+        example = DatasetExample(
+            dataset=DatasetName.DOCFINQA,
+            split=split,
             example_id=example_id,
-            finqa_id=finqa_record.id,
-            finqa_source_file=finqa_record.filename,
-            link_status=link_result.status,
-            question=question,
-            answer=answer,
-            program=program,
-            elements=elements,
+            question=normalized_question,
+            reference_answer=ReferenceAnswer(
+                text=answer,
+                program=program,
+            ),
             supporting_facts=supporting_facts,
+        )
+
+        normalized_record = NormalizedDocFinQARecord(
+            document=document,
+            elements=elements,
+            example=example,
         )
 
         return DocFinQANormalizationResult(

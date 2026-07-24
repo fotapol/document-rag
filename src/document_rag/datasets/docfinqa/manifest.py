@@ -43,6 +43,7 @@ def write_docfinqa_manifest(
     *,
     output_directory: Path,
     config: DatasetConfig,
+    finqa_config: DatasetConfig,
     split_inputs: Iterable[DocFinQASplitManifestInput],
     chunk_size: int,
     chunk_overlap: int,
@@ -53,6 +54,9 @@ def write_docfinqa_manifest(
 
     if config.name is not DatasetName.DOCFINQA:
         raise ValueError("DocFinQA manifest requires a DocFinQA configuration")
+
+    if finqa_config.name is not DatasetName.FINQA:
+        raise ValueError("DocFinQA manifest requires a FinQA configuration")
 
     if chunk_size <= 0:
         raise ValueError("Chunk size must be positive")
@@ -115,9 +119,15 @@ def write_docfinqa_manifest(
     payload: dict[str, Any] = {
         "dataset": DatasetName.DOCFINQA.value,
         "schema_version": config.schema_version,
-        "source": {
-            "revision": config.source_revision,
-            "url": config.source_url,
+        "sources": {
+            DatasetName.DOCFINQA.value: {
+                "revision": config.source_revision,
+                "url": config.source_url,
+            },
+            DatasetName.FINQA.value: {
+                "revision": finqa_config.source_revision,
+                "url": finqa_config.source_url,
+            },
         },
         "preprocessing": {
             "chunk_overlap": chunk_overlap,

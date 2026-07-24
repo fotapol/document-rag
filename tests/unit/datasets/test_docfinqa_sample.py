@@ -8,14 +8,28 @@ import pytest
 from document_rag.datasets.config import DatasetConfig, DatasetFiles
 from document_rag.datasets.docfinqa.integrity import validate_docfinqa_output
 from document_rag.datasets.docfinqa.sample import create_docfinqa_sample
-from document_rag.datasets.models import DatasetName, DatasetSplit
+from document_rag.datasets.models import (
+    DatasetExample,
+    DatasetName,
+    DatasetSplit,
+    ReferenceAnswer,
+    SupportingFact,
+)
+from document_rag.domain import (
+    Document,
+    DocumentElement,
+    DocumentElementType,
+    Question,
+)
 
 
-def make_config() -> DatasetConfig:
+def make_config(
+    name: DatasetName = DatasetName.DOCFINQA,
+) -> DatasetConfig:
     return DatasetConfig(
-        name=DatasetName.DOCFINQA,
+        name=name,
         schema_version="1",
-        source_url=("https://huggingface.co/datasets/kensho/DocFinQA"),
+        source_url=f"https://example.com/{name.value}",
         source_revision="a" * 40,
         files=DatasetFiles(
             train="train.json",
@@ -42,44 +56,63 @@ def write_source_output(
         source_text = f"Revenue for document {document_number} was 100."
 
         documents.append(
-            {
-                "dataset": "docfinqa",
-                "document_id": document_id,
-                "split": split.value,
-            }
+            Document(
+                document_id=document_id,
+                file_name=f"{document_number:04d}.txt",
+                mime_type="text/plain",
+                page_count=1,
+                metadata={
+                    "dataset": DatasetName.DOCFINQA.value,
+                    "split": split.value,
+                },
+            ).model_dump(mode="json")
         )
         elements.append(
-            {
-                "document_id": document_id,
-                "element_id": element_id,
-                "end_char": len(source_text),
-                "index": 0,
-                "source_text": source_text,
-                "start_char": 0,
-            }
+            DocumentElement(
+                document_id=document_id,
+                element_id=element_id,
+                element_type=DocumentElementType.PARAGRAPH,
+                source_text=source_text,
+                page_number=1,
+                metadata={
+                    "dataset": DatasetName.DOCFINQA.value,
+                    "split": split.value,
+                    "chunk_index": 0,
+                    "start_char": 0,
+                    "end_char": len(source_text),
+                },
+            ).model_dump(mode="json")
         )
 
         for example_number in range(examples_per_document):
+            example_id = f"docfinqa:example:{document_number:04d}:{example_number:04d}"
             examples.append(
-                {
-                    "answer": "100",
-                    "dataset": "docfinqa",
-                    "document_id": document_id,
-                    "example_id": (f"docfinqa:example:{document_number:04d}:{example_number:04d}"),
-                    "finqa_id": (f"report-{document_number}-{example_number}"),
-                    "finqa_source_file": (f"report-{document_number}.pdf"),
-                    "link_status": "exact",
-                    "program": "answer = 100",
-                    "question": (f"What was revenue in document {document_number}?"),
-                    "split": split.value,
-                    "supporting_facts": [
-                        {
-                            "element_id": element_id,
-                            "score": 1.0,
-                            "source_key": "text_1",
-                        }
-                    ],
-                }
+                DatasetExample(
+                    dataset=DatasetName.DOCFINQA,
+                    split=split,
+                    example_id=example_id,
+                    question=Question(
+                        question_id=example_id,
+                        document_id=document_id,
+                        text=f"What was revenue in document {document_number}?",
+                        metadata={
+                            "source_example_id": (f"report-{document_number}-{example_number}"),
+                            "source_file": f"report-{document_number}.pdf",
+                            "link_status": "exact",
+                        },
+                    ),
+                    reference_answer=ReferenceAnswer(
+                        text="100",
+                        program="answer = 100",
+                    ),
+                    supporting_facts=(
+                        SupportingFact(
+                            element_id=element_id,
+                            score=1.0,
+                            source_key="text_1",
+                        ),
+                    ),
+                ).model_dump(mode="json")
             )
 
     split_directory = root / split.value
@@ -103,9 +136,15 @@ def write_source_output(
     manifest = {
         "dataset": "docfinqa",
         "schema_version": "1",
-        "source": {
-            "revision": "a" * 40,
-            "url": "https://example.com/docfinqa",
+        "sources": {
+            "docfinqa": {
+                "revision": "a" * 40,
+                "url": "https://example.com/docfinqa",
+            },
+            "finqa": {
+                "revision": "a" * 40,
+                "url": "https://example.com/finqa",
+            },
         },
         "preprocessing": {
             "chunk_overlap": 20,
@@ -195,6 +234,7 @@ def test_sample_selects_stable_document_limit(
         input_directory=source,
         output_directory=output,
         config=make_config(),
+        finqa_config=make_config(DatasetName.FINQA),
         splits=[DatasetSplit.TRAIN],
         chunk_size=100,
         chunk_overlap=20,
@@ -225,7 +265,7 @@ def test_sample_selects_stable_document_limit(
 
     assert {document["document_id"] for document in documents} == expected_ids
     assert {element["document_id"] for element in elements} == expected_ids
-    assert {example["document_id"] for example in examples} == expected_ids
+    assert {example["question"]["document_id"] for example in examples} == expected_ids
 
 
 def test_sample_preserves_referential_integrity(
@@ -240,6 +280,7 @@ def test_sample_preserves_referential_integrity(
         input_directory=source,
         output_directory=output,
         config=make_config(),
+        finqa_config=make_config(DatasetName.FINQA),
         splits=[DatasetSplit.TRAIN],
         chunk_size=100,
         chunk_overlap=20,
@@ -267,6 +308,7 @@ def test_sample_manifest_records_selection(
         input_directory=source,
         output_directory=output,
         config=make_config(),
+        finqa_config=make_config(DatasetName.FINQA),
         splits=[DatasetSplit.TRAIN],
         chunk_size=100,
         chunk_overlap=20,
@@ -295,6 +337,7 @@ def test_sample_is_deterministic(
         input_directory=source,
         output_directory=tmp_path / "first",
         config=make_config(),
+        finqa_config=make_config(DatasetName.FINQA),
         splits=[DatasetSplit.TRAIN],
         chunk_size=100,
         chunk_overlap=20,
@@ -305,6 +348,7 @@ def test_sample_is_deterministic(
         input_directory=source,
         output_directory=tmp_path / "second",
         config=make_config(),
+        finqa_config=make_config(DatasetName.FINQA),
         splits=[DatasetSplit.TRAIN],
         chunk_size=100,
         chunk_overlap=20,
@@ -346,6 +390,7 @@ def test_sample_uses_all_documents_when_limit_is_larger(
         input_directory=source,
         output_directory=output,
         config=make_config(),
+        finqa_config=make_config(DatasetName.FINQA),
         splits=[DatasetSplit.TRAIN],
         chunk_size=100,
         chunk_overlap=20,
@@ -369,6 +414,7 @@ def test_sample_rejects_invalid_document_limit(
             input_directory=tmp_path,
             output_directory=tmp_path / "sample",
             config=make_config(),
+            finqa_config=make_config(DatasetName.FINQA),
             splits=[DatasetSplit.TRAIN],
             chunk_size=100,
             chunk_overlap=20,

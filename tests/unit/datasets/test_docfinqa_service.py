@@ -185,6 +185,7 @@ def test_service_prepares_selected_split(
 
     assert manifest["dataset"] == "docfinqa"
     assert list(manifest["splits"]) == ["train"]
+    assert set(manifest["sources"]) == {"docfinqa", "finqa"}
 
     train_manifest = manifest["splits"]["train"]
 
@@ -209,6 +210,8 @@ def test_service_prepares_selected_split(
     assert sample_split.examples.record_count == 1
 
     assert result.sample_manifest.path.is_file()
+    assert result.integrity_report.document_overlaps == ()
+    assert result.sample_integrity_report.document_overlaps == ()
 
 
 def test_service_is_deterministic(
@@ -301,13 +304,23 @@ def test_service_orders_selected_splits(
     docfinqa_directory = tmp_path / "docfinqa"
 
     for filename in ("train.json", "dev.json"):
+        question = (
+            "What was the revenue?"
+            if filename == "train.json"
+            else "How much revenue was reported?"
+        )
         write_json(
             finqa_directory / filename,
-            [make_finqa_record()],
+            [
+                make_finqa_record(
+                    record_id=f"ABC/2020/page_1.pdf-{filename}",
+                    question=question,
+                )
+            ],
         )
         write_json(
             docfinqa_directory / filename,
-            [make_docfinqa_record()],
+            [make_docfinqa_record(question=question)],
         )
 
     result = prepare_docfinqa_dataset(
@@ -333,6 +346,47 @@ def test_service_orders_selected_splits(
         DatasetSplit.TRAIN,
         DatasetSplit.VALIDATION,
     ]
+    assert len(result.integrity_report.document_overlaps) == 1
+
+
+def test_service_rejects_cross_split_example_overlap(
+    tmp_path: Path,
+) -> None:
+    finqa_directory = tmp_path / "finqa"
+    docfinqa_directory = tmp_path / "docfinqa"
+
+    for filename in ("train.json", "dev.json"):
+        write_json(
+            finqa_directory / filename,
+            [make_finqa_record()],
+        )
+        write_json(
+            docfinqa_directory / filename,
+            [make_docfinqa_record()],
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="share 1 example IDs",
+    ):
+        prepare_docfinqa_dataset(
+            docfinqa_source_directory=docfinqa_directory,
+            finqa_source_directory=finqa_directory,
+            output_directory=tmp_path / "output",
+            docfinqa_config=make_config(
+                name=DatasetName.DOCFINQA,
+            ),
+            finqa_config=make_config(
+                name=DatasetName.FINQA,
+            ),
+            splits=[
+                DatasetSplit.TRAIN,
+                DatasetSplit.VALIDATION,
+            ],
+            chunk_size=100,
+            chunk_overlap=20,
+            evidence_minimum_score=0.8,
+        )
 
 
 def test_service_rejects_empty_split_selection(

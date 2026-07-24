@@ -1,7 +1,7 @@
 from enum import StrEnum
-from typing import Self
+from typing import Annotated, Self
 
-from pydantic import Field, JsonValue, model_validator
+from pydantic import Field, JsonValue, StringConstraints, model_validator
 
 from document_rag.domain.base import BaseDomainModel
 
@@ -43,7 +43,13 @@ class DocumentElement(BaseDomainModel):
     element_id: str = Field(min_length=1)
     document_id: str = Field(min_length=1)
     element_type: DocumentElementType
-    source_text: str = Field(min_length=1)
+    source_text: Annotated[
+        str,
+        StringConstraints(
+            min_length=1,
+            strip_whitespace=False,
+        ),
+    ]
     page_number: int = Field(ge=1)
     section: str | None = Field(default=None, min_length=1)
     parent_element_id: str | None = Field(default=None, min_length=1)

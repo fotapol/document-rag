@@ -175,6 +175,15 @@ def test_cli_prepares_docfinqa(
             manifest=SimpleNamespace(
                 path=Path("data/processed/docfinqa/manifest.json"),
             ),
+            integrity_report=SimpleNamespace(
+                document_overlaps=(
+                    SimpleNamespace(
+                        count=1,
+                        left_split=DatasetSplit.TRAIN,
+                        right_split=DatasetSplit.VALIDATION,
+                    ),
+                ),
+            ),
         )
 
     monkeypatch.setattr(
@@ -238,6 +247,7 @@ def test_cli_prepares_docfinqa(
     assert "[train] Starting preparation" in captured.err
     assert "[train] 7 records processed" in captured.err
     assert "[train] Completed: 7 records processed" in captured.err
+    assert "1 documents are shared between train and validation" in captured.err
 
 
 @pytest.mark.parametrize(

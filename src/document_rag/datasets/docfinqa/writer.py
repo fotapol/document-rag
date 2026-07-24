@@ -10,19 +10,15 @@ from hashlib import sha256
 from pathlib import Path
 from typing import IO, Any
 
-from document_rag.datasets.docfinqa.normalizer import (
-    NormalizedDocFinQAElement,
-    NormalizedDocFinQASupportingFact,
-)
 from document_rag.datasets.docfinqa.preparer import (
-    PreparedDocFinQADocument,
-    PreparedDocFinQAExample,
     PreparedDocFinQAItem,
 )
 from document_rag.datasets.models import (
+    DatasetExample,
     DatasetName,
     DatasetSplit,
 )
+from document_rag.domain import Document, DocumentElement
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,8 +231,10 @@ def _validate_and_write_item(
         if item.elements:
             raise ValueError("Elements cannot be emitted without a document")
 
-        if example.document_id not in known_document_ids:
-            raise ValueError(f"Example references an unknown document: {example.document_id}")
+        if example.question.document_id not in known_document_ids:
+            raise ValueError(
+                f"Example references an unknown document: {example.question.document_id}"
+            )
 
     if example.example_id in known_example_ids:
         raise ValueError(f"Duplicate DocFinQA example ID: {example.example_id}")
@@ -253,22 +251,22 @@ def _validate_and_write_item(
 
 def _write_new_document(
     *,
-    document: PreparedDocFinQADocument,
-    elements: tuple[NormalizedDocFinQAElement, ...],
-    example: PreparedDocFinQAExample,
+    document: Document,
+    elements: tuple[DocumentElement, ...],
+    example: DatasetExample,
     split: DatasetSplit,
     known_document_ids: set[str],
     known_element_ids: set[str],
     document_writer: _TemporaryJsonlWriter,
     element_writer: _TemporaryJsonlWriter,
 ) -> None:
-    if document.dataset is not DatasetName.DOCFINQA:
+    if document.metadata.get("dataset") != DatasetName.DOCFINQA.value:
         raise ValueError("Document dataset must be docfinqa")
 
-    if document.split is not split:
+    if document.metadata.get("split") != split.value:
         raise ValueError("Document split does not match writer split")
 
-    if document.document_id != example.document_id:
+    if document.document_id != example.question.document_id:
         raise ValueError("Document and example IDs do not match")
 
     if document.document_id in known_document_ids:
@@ -293,7 +291,7 @@ def _write_new_document(
 
 def _validate_example_identity(
     *,
-    example: PreparedDocFinQAExample,
+    example: DatasetExample,
     split: DatasetSplit,
 ) -> None:
     if example.dataset is not DatasetName.DOCFINQA:
@@ -302,53 +300,23 @@ def _validate_example_identity(
     if example.split is not split:
         raise ValueError("Example split does not match writer split")
 
+    if example.question.question_id != example.example_id:
+        raise ValueError("Question ID must match the DocFinQA example ID")
+
 
 def _serialize_document(
-    document: PreparedDocFinQADocument,
+    document: Document,
 ) -> dict[str, Any]:
-    return {
-        "dataset": document.dataset.value,
-        "document_id": document.document_id,
-        "split": document.split.value,
-    }
+    return document.model_dump(mode="json")
 
 
 def _serialize_element(
-    element: NormalizedDocFinQAElement,
+    element: DocumentElement,
 ) -> dict[str, Any]:
-    return {
-        "document_id": element.document_id,
-        "element_id": element.element_id,
-        "end_char": element.end_char,
-        "index": element.index,
-        "source_text": element.source_text,
-        "start_char": element.start_char,
-    }
+    return element.model_dump(mode="json")
 
 
 def _serialize_example(
-    example: PreparedDocFinQAExample,
+    example: DatasetExample,
 ) -> dict[str, Any]:
-    return {
-        "answer": example.answer,
-        "dataset": example.dataset.value,
-        "document_id": example.document_id,
-        "example_id": example.example_id,
-        "finqa_id": example.finqa_id,
-        "finqa_source_file": example.finqa_source_file,
-        "link_status": example.link_status.value,
-        "program": example.program,
-        "question": example.question,
-        "split": example.split.value,
-        "supporting_facts": [_serialize_supporting_fact(fact) for fact in example.supporting_facts],
-    }
-
-
-def _serialize_supporting_fact(
-    supporting_fact: NormalizedDocFinQASupportingFact,
-) -> dict[str, Any]:
-    return {
-        "element_id": supporting_fact.element_id,
-        "score": supporting_fact.score,
-        "source_key": supporting_fact.source_key,
-    }
+    return example.model_dump(mode="json")

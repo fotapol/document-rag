@@ -14,6 +14,10 @@ from document_rag.datasets.docfinqa.chunking import (
 from document_rag.datasets.docfinqa.evidence import (
     DocFinQAEvidenceSelector,
 )
+from document_rag.datasets.docfinqa.integrity import (
+    DocFinQAIntegrityReport,
+    validate_docfinqa_output,
+)
 from document_rag.datasets.docfinqa.manifest import (
     DocFinQASplitManifestInput,
     WrittenDocFinQAManifest,
@@ -62,6 +66,8 @@ class DocFinQAPreparationResult:
     manifest: WrittenDocFinQAManifest
     sample_splits: tuple[WrittenDocFinQASplit, ...]
     sample_manifest: WrittenDocFinQAManifest
+    integrity_report: DocFinQAIntegrityReport
+    sample_integrity_report: DocFinQAIntegrityReport
 
 
 class DocFinQAProgressStage(StrEnum):
@@ -187,28 +193,35 @@ def prepare_docfinqa_dataset(
     manifest = write_docfinqa_manifest(
         output_directory=output_directory,
         config=docfinqa_config,
+        finqa_config=finqa_config,
         split_inputs=manifest_inputs,
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
         evidence_minimum_score=evidence_minimum_score,
     )
 
+    integrity_report = validate_docfinqa_output(output_directory)
+
     sample_result = create_docfinqa_sample(
         input_directory=output_directory,
         output_directory=output_directory / "sample",
         config=docfinqa_config,
+        finqa_config=finqa_config,
         splits=selected_splits,
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
         evidence_minimum_score=evidence_minimum_score,
         documents_per_split=sample_documents_per_split,
     )
+    sample_integrity_report = validate_docfinqa_output(output_directory / "sample")
 
     return DocFinQAPreparationResult(
         splits=tuple(prepared_results),
         manifest=manifest,
         sample_splits=sample_result.splits,
         sample_manifest=sample_result.manifest,
+        integrity_report=integrity_report,
+        sample_integrity_report=sample_integrity_report,
     )
 
 

@@ -103,11 +103,11 @@ def test_preparer_emits_document_elements_and_example() -> None:
     item = items[0]
 
     assert item.document is not None
-    assert item.document.dataset is DatasetName.DOCFINQA
-    assert item.document.split is DatasetSplit.TRAIN
+    assert item.document.metadata["dataset"] == DatasetName.DOCFINQA.value
+    assert item.document.metadata["split"] == DatasetSplit.TRAIN.value
     assert item.elements
-    assert item.example.question == ("What was the revenue?")
-    assert item.example.answer == "100"
+    assert item.example.question.text == ("What was the revenue?")
+    assert item.example.reference_answer.text == "100"
 
     assert preparer.stats.total_records == 1
     assert preparer.stats.normalized_records == 1
@@ -152,7 +152,7 @@ def test_preparer_emits_repeated_document_once() -> None:
     assert items[1].document is None
     assert items[1].elements == ()
 
-    assert items[0].example.document_id == items[1].example.document_id
+    assert items[0].example.question.document_id == items[1].example.question.document_id
     assert preparer.stats.unique_documents == 1
     assert preparer.stats.normalized_records == 2
 

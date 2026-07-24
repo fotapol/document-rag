@@ -83,3 +83,25 @@ def test_reference_answer_serializes_reasoning_steps() -> None:
 
 def test_dataset_split_uses_validation_name() -> None:
     assert DatasetSplit.VALIDATION.value == "validation"
+
+
+def test_supporting_fact_accepts_bounded_matching_score() -> None:
+    fact = SupportingFact(
+        source_key="text_1",
+        element_id="element-1",
+        score=0.75,
+    )
+
+    assert fact.score == 0.75
+
+
+@pytest.mark.parametrize("score", [-0.01, 1.01])
+def test_supporting_fact_rejects_out_of_range_matching_score(
+    score: float,
+) -> None:
+    with pytest.raises(ValidationError):
+        SupportingFact(
+            source_key="text_1",
+            element_id="element-1",
+            score=score,
+        )

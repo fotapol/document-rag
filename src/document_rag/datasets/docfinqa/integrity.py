@@ -1,13 +1,20 @@
 """Streaming integrity validation for prepared DocFinQA artifacts."""
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
 
-from document_rag.datasets.models import DatasetSplit
+from pydantic import BaseModel, ValidationError
+
+from document_rag.datasets.models import (
+    DatasetExample,
+    DatasetName,
+    DatasetSplit,
+)
+from document_rag.domain import Document, DocumentElement
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +79,8 @@ def validate_docfinqa_output(
     if manifest.get("dataset") != "docfinqa":
         raise ValueError("Manifest dataset must be 'docfinqa'")
 
+    _validate_source_provenance(manifest)
+
     split_payloads = _require_mapping(
         manifest.get("splits"),
         label="manifest splits",
@@ -134,17 +143,24 @@ def _validate_split(
         record: dict[str, Any],
         line_number: int,
     ) -> None:
-        _require_identity(
-            record=record,
-            split=split,
+        document = _validate_domain_model(
+            Document,
+            record,
+            entity_name=f"{split.value} documents",
             line_number=line_number,
         )
 
-        document_id = _require_string(
-            record,
-            "document_id",
-            line_number,
-        )
+        if document.metadata.get("dataset") != DatasetName.DOCFINQA.value:
+            raise ValueError(
+                f"{split.value} documents line {line_number}: dataset must be 'docfinqa'"
+            )
+
+        if document.metadata.get("split") != split.value:
+            raise ValueError(
+                f"{split.value} documents line {line_number}: split value does not match artifact"
+            )
+
+        document_id = document.document_id
 
         if document_id in document_ids:
             raise ValueError(
@@ -169,37 +185,44 @@ def _validate_split(
         record: dict[str, Any],
         line_number: int,
     ) -> None:
-        element_id = _require_string(
+        element = _validate_domain_model(
+            DocumentElement,
             record,
-            "element_id",
-            line_number,
+            entity_name=f"{split.value} elements",
+            line_number=line_number,
         )
-        document_id = _require_string(
-            record,
-            "document_id",
-            line_number,
+
+        if element.metadata.get("dataset") != DatasetName.DOCFINQA.value:
+            raise ValueError(
+                f"{split.value} elements line {line_number}: dataset must be 'docfinqa'"
+            )
+
+        if element.metadata.get("split") != split.value:
+            raise ValueError(
+                f"{split.value} elements line {line_number}: split value does not match artifact"
+            )
+
+        element_id = element.element_id
+        document_id = element.document_id
+        index = _metadata_integer(
+            element.metadata,
+            "chunk_index",
+            entity_name=f"{split.value} elements",
+            line_number=line_number,
         )
-        index = _require_integer(
-            record,
-            "index",
-            line_number,
-        )
-        start_char = _require_integer(
-            record,
+        start_char = _metadata_integer(
+            element.metadata,
             "start_char",
-            line_number,
+            entity_name=f"{split.value} elements",
+            line_number=line_number,
         )
-        end_char = _require_integer(
-            record,
+        end_char = _metadata_integer(
+            element.metadata,
             "end_char",
-            line_number,
+            entity_name=f"{split.value} elements",
+            line_number=line_number,
         )
-        source_text = _require_string(
-            record,
-            "source_text",
-            line_number,
-            allow_whitespace=True,
-        )
+        source_text = element.source_text
 
         if document_id not in document_ids:
             raise ValueError(
@@ -254,33 +277,30 @@ def _validate_split(
         record: dict[str, Any],
         line_number: int,
     ) -> None:
-        _require_identity(
-            record=record,
-            split=split,
+        example = _validate_domain_model(
+            DatasetExample,
+            record,
+            entity_name=f"{split.value} examples",
             line_number=line_number,
         )
 
-        example_id = _require_string(
-            record,
-            "example_id",
-            line_number,
-        )
-        document_id = _require_string(
-            record,
-            "document_id",
-            line_number,
-        )
+        if example.dataset is not DatasetName.DOCFINQA:
+            raise ValueError(
+                f"{split.value} examples line {line_number}: dataset must be 'docfinqa'"
+            )
 
-        _require_string(
-            record,
-            "question",
-            line_number,
-        )
-        _require_string(
-            record,
-            "answer",
-            line_number,
-        )
+        if example.split is not split:
+            raise ValueError(
+                f"{split.value} examples line {line_number}: split value does not match artifact"
+            )
+
+        example_id = example.example_id
+        document_id = example.question.document_id
+
+        if example.question.question_id != example_id:
+            raise ValueError(
+                f"{split.value} examples line {line_number}: question ID does not match example ID"
+            )
 
         if example_id in example_ids:
             raise ValueError(
@@ -292,7 +312,7 @@ def _validate_split(
                 f"{split.value} examples line {line_number}: unknown document {document_id!r}"
             )
 
-        if record.get("link_status") not in {
+        if example.question.metadata.get("link_status") not in {
             "exact",
             "equivalent",
         }:
@@ -300,48 +320,17 @@ def _validate_split(
                 f"{split.value} examples line {line_number}: invalid accepted link status"
             )
 
-        supporting_facts = record.get("supporting_facts")
-
-        if not isinstance(supporting_facts, list) or not supporting_facts:
-            raise ValueError(
-                f"{split.value} examples line "
-                f"{line_number}: supporting facts "
-                "must be a non-empty list"
-            )
-
-        for fact_index, raw_fact in enumerate(supporting_facts):
-            fact = _require_mapping(
-                raw_fact,
-                label=(f"{split.value} example line {line_number} supporting fact {fact_index}"),
-            )
-
-            element_id = _require_string(
-                fact,
-                "element_id",
-                line_number,
-            )
-            _require_string(
-                fact,
-                "source_key",
-                line_number,
-            )
-
-            score = fact.get("score")
-
-            if (
-                isinstance(score, bool)
-                or not isinstance(score, (int, float))
-                or not 0.0 <= float(score) <= 1.0
-            ):
+        for supporting_fact in example.supporting_facts:
+            if supporting_fact.score is None:
                 raise ValueError(
                     f"{split.value} examples line {line_number}: invalid evidence score"
                 )
 
-            if element_id not in element_ids:
+            if supporting_fact.element_id not in element_ids:
                 raise ValueError(
                     f"{split.value} examples line "
                     f"{line_number}: unknown supporting "
-                    f"element {element_id!r}"
+                    f"element {supporting_fact.element_id!r}"
                 )
 
         example_ids.add(example_id)
@@ -454,6 +443,31 @@ def _validate_statistics(
         raise ValueError(f"{split.value} unique document count does not match documents")
 
 
+def _validate_source_provenance(manifest: dict[str, Any]) -> None:
+    sources = _require_mapping(
+        manifest.get("sources"),
+        label="manifest sources",
+    )
+
+    for dataset in DatasetName:
+        source = _require_mapping(
+            sources.get(dataset.value),
+            label=f"{dataset.value} manifest source",
+        )
+        url = source.get("url")
+        revision = source.get("revision")
+
+        if not isinstance(url, str) or not url.strip():
+            raise ValueError(f"{dataset.value} manifest source URL must be a non-empty string")
+
+        if (
+            not isinstance(revision, str)
+            or len(revision) != 40
+            or any(character not in "0123456789abcdef" for character in revision)
+        ):
+            raise ValueError(f"{dataset.value} manifest source revision is invalid")
+
+
 def _validate_jsonl_artifact(
     *,
     root: Path,
@@ -550,51 +564,34 @@ def _read_artifact_spec(
     )
 
 
-def _require_identity(
-    *,
-    record: dict[str, Any],
-    split: DatasetSplit,
-    line_number: int,
-) -> None:
-    if record.get("dataset") != "docfinqa":
-        raise ValueError(f"{split.value} line {line_number}: dataset must be 'docfinqa'")
-
-    if record.get("split") != split.value:
-        raise ValueError(f"{split.value} line {line_number}: split value does not match artifact")
-
-
-def _require_string(
-    record: dict[str, Any],
+def _metadata_integer(
+    metadata: Mapping[str, object],
     key: str,
-    line_number: int,
     *,
-    allow_whitespace: bool = False,
-) -> str:
-    value = record.get(key)
-
-    if not isinstance(value, str):
-        raise ValueError(f"Line {line_number}: {key!r} must be a string")
-
-    if not allow_whitespace and not value.strip():
-        raise ValueError(f"Line {line_number}: {key!r} cannot be empty")
-
-    return value
-
-
-def _require_integer(
-    record: dict[str, Any],
-    key: str,
+    entity_name: str,
     line_number: int,
 ) -> int:
-    value = record.get(key)
+    value = metadata.get(key)
 
-    if isinstance(value, bool) or not isinstance(
-        value,
-        int,
-    ):
-        raise ValueError(f"Line {line_number}: {key!r} must be an integer")
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{entity_name} line {line_number}: metadata {key!r} must be an integer")
 
     return value
+
+
+def _validate_domain_model[ModelT: BaseModel](
+    model_type: type[ModelT],
+    record: dict[str, Any],
+    *,
+    entity_name: str,
+    line_number: int,
+) -> ModelT:
+    try:
+        return model_type.model_validate(record)
+    except ValidationError as error:
+        raise ValueError(
+            f"{entity_name} line {line_number}: invalid {model_type.__name__} domain model"
+        ) from error
 
 
 def _statistics_integer(

@@ -8,6 +8,19 @@ import pytest
 from document_rag.datasets.docfinqa.integrity import (
     validate_docfinqa_output,
 )
+from document_rag.datasets.models import (
+    DatasetExample,
+    DatasetName,
+    DatasetSplit,
+    ReferenceAnswer,
+    SupportingFact,
+)
+from document_rag.domain import (
+    Document,
+    DocumentElement,
+    DocumentElementType,
+    Question,
+)
 
 
 def _write_artifact(
@@ -60,45 +73,65 @@ def _make_split(
     source_text = "Revenue was 100."
     end_char = element_end_char if element_end_char is not None else len(source_text)
 
+    dataset_split = DatasetSplit(split)
+
     documents = [
-        {
-            "dataset": "docfinqa",
-            "document_id": resolved_document_id,
-            "split": split,
-        }
+        Document(
+            document_id=resolved_document_id,
+            file_name=f"{split}.txt",
+            mime_type="text/plain",
+            page_count=1,
+            metadata={
+                "dataset": DatasetName.DOCFINQA.value,
+                "split": split,
+            },
+        ).model_dump(mode="json")
     ]
 
     elements = [
-        {
-            "document_id": resolved_document_id,
-            "element_id": element_id,
-            "end_char": end_char,
-            "index": 0,
-            "source_text": source_text,
-            "start_char": 0,
-        }
+        DocumentElement(
+            document_id=resolved_document_id,
+            element_id=element_id,
+            element_type=DocumentElementType.PARAGRAPH,
+            source_text=source_text,
+            page_number=1,
+            metadata={
+                "dataset": DatasetName.DOCFINQA.value,
+                "split": split,
+                "chunk_index": 0,
+                "start_char": 0,
+                "end_char": end_char,
+            },
+        ).model_dump(mode="json")
     ]
 
     examples = [
-        {
-            "answer": "100",
-            "dataset": "docfinqa",
-            "document_id": resolved_document_id,
-            "example_id": resolved_example_id,
-            "finqa_id": "ABC/2020/page_1.pdf-1",
-            "finqa_source_file": ("ABC/2020/page_1.pdf"),
-            "link_status": "exact",
-            "program": "answer = 100",
-            "question": "What was the revenue?",
-            "split": split,
-            "supporting_facts": [
-                {
-                    "element_id": (supporting_element_id or element_id),
-                    "score": 1.0,
-                    "source_key": "text_1",
-                }
-            ],
-        }
+        DatasetExample(
+            dataset=DatasetName.DOCFINQA,
+            split=dataset_split,
+            example_id=resolved_example_id,
+            question=Question(
+                question_id=resolved_example_id,
+                document_id=resolved_document_id,
+                text="What was the revenue?",
+                metadata={
+                    "finqa_id": "ABC/2020/page_1.pdf-1",
+                    "finqa_source_file": "ABC/2020/page_1.pdf",
+                    "link_status": "exact",
+                },
+            ),
+            reference_answer=ReferenceAnswer(
+                text="100",
+                program="answer = 100",
+            ),
+            supporting_facts=(
+                SupportingFact(
+                    element_id=(supporting_element_id or element_id),
+                    score=1.0,
+                    source_key="text_1",
+                ),
+            ),
+        ).model_dump(mode="json")
     ]
 
     artifacts = {
@@ -145,6 +178,16 @@ def _write_manifest(
     payload = {
         "dataset": "docfinqa",
         "schema_version": "1",
+        "sources": {
+            "docfinqa": {
+                "revision": "a" * 40,
+                "url": "https://example.com/docfinqa",
+            },
+            "finqa": {
+                "revision": "b" * 40,
+                "url": "https://example.com/finqa",
+            },
+        },
         "splits": splits,
     }
 

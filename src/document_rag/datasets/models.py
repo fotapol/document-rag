@@ -1,6 +1,6 @@
 from enum import StrEnum
 
-from pydantic import Field, JsonValue
+from pydantic import Field, FiniteFloat, JsonValue
 
 from document_rag.domain.base import BaseDomainModel
 from document_rag.domain.questions import Question
@@ -46,6 +46,7 @@ class SupportingFact(BaseDomainModel):
 
     source_key: NonEmptyString
     element_id: NonEmptyString
+    score: FiniteFloat | None = Field(default=None, ge=0.0, le=1.0)
 
 
 class DatasetExample(BaseDomainModel):

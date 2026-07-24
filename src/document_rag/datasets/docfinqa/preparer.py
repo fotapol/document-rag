@@ -10,8 +10,6 @@ from document_rag.datasets.docfinqa.linkage import (
 from document_rag.datasets.docfinqa.normalizer import (
     DocFinQANormalizationStatus,
     DocFinQANormalizer,
-    NormalizedDocFinQAElement,
-    NormalizedDocFinQASupportingFact,
 )
 from document_rag.datasets.docfinqa.raw_models import (
     DocFinQARawRecord,
@@ -20,38 +18,13 @@ from document_rag.datasets.finqa.raw_models import (
     FinQARawRecord,
 )
 from document_rag.datasets.models import (
-    DatasetName,
+    DatasetExample,
     DatasetSplit,
 )
+from document_rag.domain import Document, DocumentElement
 
-
-@dataclass(frozen=True, slots=True)
-class PreparedDocFinQADocument:
-    """One unique document emitted by the split preparer."""
-
-    dataset: DatasetName
-    split: DatasetSplit
-    document_id: str
-
-
-@dataclass(frozen=True, slots=True)
-class PreparedDocFinQAExample:
-    """One normalized DocFinQA question and its gold evidence."""
-
-    dataset: DatasetName
-    split: DatasetSplit
-    document_id: str
-    example_id: str
-    finqa_id: str
-    finqa_source_file: str
-    link_status: DocFinQALinkStatus
-    question: str
-    answer: str
-    program: str | None
-    supporting_facts: tuple[
-        NormalizedDocFinQASupportingFact,
-        ...,
-    ]
+PreparedDocFinQADocument = Document
+PreparedDocFinQAExample = DatasetExample
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,9 +36,9 @@ class PreparedDocFinQAItem:
     only the example.
     """
 
-    document: PreparedDocFinQADocument | None
-    elements: tuple[NormalizedDocFinQAElement, ...]
-    example: PreparedDocFinQAExample
+    document: Document | None
+    elements: tuple[DocumentElement, ...]
+    example: DatasetExample
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,47 +172,31 @@ class DocFinQASplitPreparer:
 
             normalized_record = normalization_result.record
 
-            if normalized_record.example_id in self._seen_example_ids:
+            example_id = normalized_record.example.example_id
+
+            if example_id in self._seen_example_ids:
                 self._skipped_duplicate += 1
                 continue
 
-            self._seen_example_ids.add(normalized_record.example_id)
+            self._seen_example_ids.add(example_id)
 
-            is_new_document = normalized_record.document_id not in self._seen_document_ids
+            document_id = normalized_record.document.document_id
+            is_new_document = document_id not in self._seen_document_ids
 
             if is_new_document:
-                self._seen_document_ids.add(normalized_record.document_id)
-
-                document = PreparedDocFinQADocument(
-                    dataset=DatasetName.DOCFINQA,
-                    split=self._split,
-                    document_id=(normalized_record.document_id),
-                )
+                self._seen_document_ids.add(document_id)
+                document = normalized_record.document
                 elements = normalized_record.elements
             else:
                 document = None
                 elements = ()
-
-            example = PreparedDocFinQAExample(
-                dataset=DatasetName.DOCFINQA,
-                split=self._split,
-                document_id=normalized_record.document_id,
-                example_id=normalized_record.example_id,
-                finqa_id=normalized_record.finqa_id,
-                finqa_source_file=(normalized_record.finqa_source_file),
-                link_status=normalized_record.link_status,
-                question=normalized_record.question,
-                answer=normalized_record.answer,
-                program=normalized_record.program,
-                supporting_facts=(normalized_record.supporting_facts),
-            )
 
             self._normalized_records += 1
 
             yield PreparedDocFinQAItem(
                 document=document,
                 elements=elements,
-                example=example,
+                example=normalized_record.example,
             )
 
         if self._total_records == 0:

@@ -31,7 +31,7 @@ def make_config(
     return DatasetConfig(
         name=name,
         schema_version="1",
-        source_url=("https://huggingface.co/datasets/kensho/DocFinQA"),
+        source_url=f"https://example.com/{name.value}",
         source_revision="a" * 40,
         files=DatasetFiles(
             train="train.json",
@@ -124,6 +124,7 @@ def test_manifest_contains_source_artifacts_and_stats(
     result = write_docfinqa_manifest(
         output_directory=tmp_path,
         config=make_config(),
+        finqa_config=make_config(name=DatasetName.FINQA),
         split_inputs=[split_input],
         chunk_size=2_750,
         chunk_overlap=550,
@@ -135,7 +136,16 @@ def test_manifest_contains_source_artifacts_and_stats(
     assert payload["dataset"] == "docfinqa"
     assert payload["schema_version"] == "1"
 
-    assert payload["source"]["revision"] == "a" * 40
+    assert payload["sources"] == {
+        "docfinqa": {
+            "revision": "a" * 40,
+            "url": "https://example.com/docfinqa",
+        },
+        "finqa": {
+            "revision": "a" * 40,
+            "url": "https://example.com/finqa",
+        },
+    }
 
     assert payload["preprocessing"] == {
         "chunk_overlap": 550,
@@ -170,6 +180,7 @@ def test_manifest_is_deterministic(
     first_result = write_docfinqa_manifest(
         output_directory=tmp_path,
         config=make_config(),
+        finqa_config=make_config(name=DatasetName.FINQA),
         split_inputs=[
             validation_input,
             train_input,
@@ -184,6 +195,7 @@ def test_manifest_is_deterministic(
     second_result = write_docfinqa_manifest(
         output_directory=tmp_path,
         config=make_config(),
+        finqa_config=make_config(name=DatasetName.FINQA),
         split_inputs=[
             train_input,
             validation_input,
@@ -209,6 +221,7 @@ def test_manifest_rejects_duplicate_splits(
         write_docfinqa_manifest(
             output_directory=tmp_path,
             config=make_config(),
+            finqa_config=make_config(name=DatasetName.FINQA),
             split_inputs=[
                 split_input,
                 split_input,
@@ -250,6 +263,7 @@ def test_manifest_rejects_inconsistent_example_count(
         write_docfinqa_manifest(
             output_directory=tmp_path,
             config=make_config(),
+            finqa_config=make_config(name=DatasetName.FINQA),
             split_inputs=[invalid_input],
             chunk_size=2_750,
             chunk_overlap=550,
@@ -288,6 +302,7 @@ def test_manifest_rejects_artifact_outside_output(
         write_docfinqa_manifest(
             output_directory=output_directory,
             config=make_config(),
+            finqa_config=make_config(name=DatasetName.FINQA),
             split_inputs=[invalid_input],
             chunk_size=2_750,
             chunk_overlap=550,
@@ -305,6 +320,25 @@ def test_manifest_rejects_wrong_dataset_config(
         write_docfinqa_manifest(
             output_directory=tmp_path,
             config=make_config(name=DatasetName.FINQA),
+            finqa_config=make_config(name=DatasetName.FINQA),
+            split_inputs=[make_split_input(tmp_path)],
+            chunk_size=2_750,
+            chunk_overlap=550,
+            evidence_minimum_score=0.6,
+        )
+
+
+def test_manifest_rejects_wrong_finqa_config(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="requires a FinQA configuration",
+    ):
+        write_docfinqa_manifest(
+            output_directory=tmp_path,
+            config=make_config(),
+            finqa_config=make_config(),
             split_inputs=[make_split_input(tmp_path)],
             chunk_size=2_750,
             chunk_overlap=550,
@@ -322,6 +356,7 @@ def test_manifest_rejects_empty_split_list(
         write_docfinqa_manifest(
             output_directory=tmp_path,
             config=make_config(),
+            finqa_config=make_config(name=DatasetName.FINQA),
             split_inputs=[],
             chunk_size=2_750,
             chunk_overlap=550,
@@ -337,6 +372,7 @@ def test_manifest_records_sample_configuration(
     result = write_docfinqa_manifest(
         output_directory=tmp_path,
         config=make_config(),
+        finqa_config=make_config(name=DatasetName.FINQA),
         split_inputs=[split_input],
         chunk_size=2_750,
         chunk_overlap=550,

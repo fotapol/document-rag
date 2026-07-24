@@ -312,6 +312,15 @@ def _run_docfinqa_prepare(
         if sample_manifest is not None:
             print(f"Sample manifest: {sample_manifest.path}")
 
+    for overlap in result.integrity_report.document_overlaps:
+        print(
+            "Warning: "
+            f"{overlap.count} documents are shared between "
+            f"{overlap.left_split.value} and "
+            f"{overlap.right_split.value}",
+            file=sys.stderr,
+        )
+
     return 0
 
 
