@@ -1,0 +1,10 @@
+name = "docfinqa"
+schema_version = "1"
+
+source_url = "https://huggingface.co/datasets/kensho/DocFinQA"
+source_revision = "64ebaff62f692495bcc182f45cf9a9606251b19b"
+
+[files]
+train = "train.json"
+validation = "dev.json"
+test = "test.json"
