@@ -27,6 +27,7 @@ from document_rag.datasets.docfinqa.writer import WrittenDocFinQASplit
 from document_rag.datasets.finqa import prepare_finqa_dataset
 from document_rag.datasets.finqa.writer import WrittenFinQASplit
 from document_rag.datasets.models import DatasetName, DatasetSplit
+from document_rag.training import export_financial_qa_training_data
 
 _DOCFINQA_PROGRESS_INTERVAL_SECONDS = 5.0
 
@@ -42,6 +43,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if arguments.command == "data" and arguments.data_command == "validate":
         return _run_data_validate(arguments)
+
+    if arguments.command == "training" and arguments.training_command == "export":
+        return _run_training_export(arguments)
 
     parser.error("A command is required")
     return 2
@@ -146,6 +150,48 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         required=True,
         help=("Directory containing manifest.json and normalized artifacts."),
+    )
+
+    training_parser = commands.add_parser(
+        "training",
+        help="Export normalized datasets for model training.",
+    )
+    training_commands = training_parser.add_subparsers(dest="training_command")
+
+    export_parser = training_commands.add_parser(
+        "export",
+        help="Export FinQA and DocFinQA as deterministic chat JSONL.",
+    )
+    export_parser.add_argument(
+        "--finqa",
+        dest="finqa_directory",
+        type=Path,
+        required=True,
+        help="Directory containing prepared FinQA artifacts.",
+    )
+    export_parser.add_argument(
+        "--docfinqa",
+        dest="docfinqa_directory",
+        type=Path,
+        required=True,
+        help="Directory containing prepared DocFinQA artifacts.",
+    )
+    export_parser.add_argument(
+        "--output",
+        dest="output_directory",
+        type=Path,
+        required=True,
+        help="Directory for exported training artifacts.",
+    )
+    export_parser.add_argument(
+        "--split",
+        dest="splits",
+        action="append",
+        choices=tuple(split.value for split in DatasetSplit),
+        help=(
+            "Split to export. May be specified more than once. "
+            "All splits are exported when omitted."
+        ),
     )
 
     return parser
@@ -404,6 +450,32 @@ def _run_data_validate(arguments: argparse.Namespace) -> int:
             file=sys.stderr,
         )
 
+    return 0
+
+
+def _run_training_export(arguments: argparse.Namespace) -> int:
+    finqa_directory = cast(Path, arguments.finqa_directory)
+    docfinqa_directory = cast(Path, arguments.docfinqa_directory)
+    output_directory = cast(Path, arguments.output_directory)
+    split_values = cast(list[str] | None, arguments.splits)
+
+    try:
+        result = export_financial_qa_training_data(
+            finqa_directory=finqa_directory,
+            docfinqa_directory=docfinqa_directory,
+            output_directory=output_directory,
+            splits=_parse_splits(split_values),
+        )
+    except (OSError, ValueError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+
+    print("Exported financial QA training data:")
+
+    for artifact in result.artifacts:
+        print(f"  {artifact.split.value}: {artifact.record_count} examples -> {artifact.path}")
+
+    print(f"Manifest: {result.manifest_path}")
     return 0
 
 
