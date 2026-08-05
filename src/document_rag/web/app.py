@@ -11,6 +11,12 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 
+from document_rag.ingestion.chunking import (
+    DocumentChunk,
+    DocumentChunkingError,
+    MarkdownChunker,
+    chunks_to_jsonl,
+)
 from document_rag.ingestion.llamaparse import (
     LlamaParseConfigurationError,
     LlamaParseProcessingError,
@@ -43,16 +49,28 @@ class DocumentParser(Protocol):
         """Parse one validated PDF upload."""
 
 
+class DocumentChunker(Protocol):
+    """Interface required by the web layer for document chunking."""
+
+    def chunk(
+        self,
+        document: ParsedDocument,
+    ) -> tuple[DocumentChunk, ...]:
+        """Convert one parsed document into normalized chunks."""
+
+
 def create_app(
     document_parser: DocumentParser | None = None,
+    document_chunker: DocumentChunker | None = None,
 ) -> FastAPI:
-    """Create the application and allow parser injection in tests."""
+    """Create the application and allow dependency injection in tests."""
 
     app = FastAPI(
         title="Document RAG",
-        version="0.1.0",
+        version="0.2.0",
     )
     app.state.document_parser = document_parser
+    app.state.document_chunker = document_chunker or MarkdownChunker()
 
     @app.get("/health")
     async def health() -> JSONResponse:
@@ -64,14 +82,9 @@ def create_app(
     async def index(request: Request) -> HTMLResponse:
         """Render the PDF upload page."""
 
-        return TEMPLATES.TemplateResponse(
-            request=request,
-            name="index.html",
-            context={
-                "document": None,
-                "error": None,
-                "max_upload_mb": MAX_UPLOAD_BYTES // 1024 // 1024,
-            },
+        return render_result(
+            request,
+            status_code=200,
         )
 
     @app.post("/documents/parse", response_class=HTMLResponse)
@@ -79,7 +92,7 @@ def create_app(
         request: Request,
         file: UploadFile,
     ) -> HTMLResponse:
-        """Validate, parse, and render one uploaded PDF."""
+        """Validate, parse, chunk, and render one uploaded PDF."""
 
         error = validate_upload_metadata(file)
 
@@ -116,15 +129,22 @@ def create_app(
                 content_type=file.content_type or "application/pdf",
                 content=content,
             )
+
+            chunker = get_document_chunker(request)
+            chunks = chunker.chunk(document)
+            chunks_jsonl = chunks_to_jsonl(chunks)
         except LlamaParseConfigurationError as exc:
             return render_result(
                 request,
                 error=str(exc),
                 status_code=503,
             )
-        except LlamaParseProcessingError as exc:
+        except (
+            LlamaParseProcessingError,
+            DocumentChunkingError,
+        ) as exc:
             LOGGER.warning(
-                "LlamaParse could not process %s: %s",
+                "Document processing failed for %s: %s",
                 file.filename,
                 exc,
             )
@@ -135,18 +155,20 @@ def create_app(
             )
         except Exception:
             LOGGER.exception(
-                "Unexpected document parsing failure for %s",
+                "Unexpected document processing failure for %s",
                 file.filename,
             )
             return render_result(
                 request,
-                error="Unexpected document parsing failure.",
+                error="Unexpected document processing failure.",
                 status_code=502,
             )
 
         return render_result(
             request,
             document=document,
+            chunks=chunks,
+            chunks_jsonl=chunks_jsonl,
             status_code=200,
         )
 
@@ -196,20 +218,33 @@ def get_document_parser(request: Request) -> DocumentParser:
     return parser
 
 
+def get_document_chunker(request: Request) -> DocumentChunker:
+    """Return the configured deterministic document chunker."""
+
+    return cast(
+        DocumentChunker,
+        request.app.state.document_chunker,
+    )
+
+
 def render_result(
     request: Request,
     *,
     document: ParsedDocument | None = None,
+    chunks: tuple[DocumentChunk, ...] = (),
+    chunks_jsonl: str = "",
     error: str | None = None,
     status_code: int,
 ) -> HTMLResponse:
-    """Render a successful parse result or a user-facing error."""
+    """Render the upload page, processing result, or user-facing error."""
 
     return TEMPLATES.TemplateResponse(
         request=request,
         name="index.html",
         context={
             "document": document,
+            "chunks": chunks,
+            "chunks_jsonl": chunks_jsonl,
             "error": error,
             "max_upload_mb": MAX_UPLOAD_BYTES // 1024 // 1024,
         },

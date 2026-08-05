@@ -37,6 +37,21 @@
             border-color: #c33;
         }
 
+        .metadata {
+            display: grid;
+            grid-template-columns: max-content 1fr;
+            gap: 0.25rem 1rem;
+        }
+
+        .metadata dt {
+            font-weight: 600;
+        }
+
+        .metadata dd {
+            margin: 0;
+            overflow-wrap: anywhere;
+        }
+
         pre {
             white-space: pre-wrap;
             overflow-wrap: anywhere;
@@ -49,14 +64,20 @@
         code {
             font-family: ui-monospace, monospace;
         }
+
+        .chunk {
+            border-top: 1px solid #7776;
+            padding-top: 1rem;
+            margin-top: 1rem;
+        }
     </style>
 </head>
 <body>
     <main>
         <h1>Document ingestion</h1>
         <p>
-            Upload one PDF. The server validates it and sends it to
-            LlamaParse for page-level Markdown extraction.
+            Upload one PDF. The server validates it, parses it with
+            LlamaParse, and creates deterministic retrieval chunks.
         </p>
 
         <form
@@ -76,12 +97,12 @@
                 required
             >
             <br>
-            <button type="submit">Parse document</button>
+            <button type="submit">Parse and chunk document</button>
         </form>
 
         {% if error %}
         <section class="panel error">
-            <h2>Parsing failed</h2>
+            <h2>Processing failed</h2>
             <p>{{ error }}</p>
         </section>
         {% endif %}
@@ -89,22 +110,85 @@
         {% if document %}
         <section class="panel">
             <h2>Parsed document</h2>
-            <dl>
+            <dl class="metadata">
                 <dt>Filename</dt>
                 <dd>{{ document.filename }}</dd>
                 <dt>Document ID</dt>
                 <dd><code>{{ document.document_id }}</code></dd>
                 <dt>Pages</dt>
                 <dd>{{ document.pages | length }}</dd>
+                <dt>Chunks</dt>
+                <dd>{{ chunks | length }}</dd>
             </dl>
 
             {% for page in document.pages %}
             <details {% if loop.first %}open{% endif %}>
-                <summary>Page {{ page.page_number }}</summary>
+                <summary>Parsed Markdown — page {{ page.page_number }}</summary>
                 <pre>{{ page.markdown }}</pre>
             </details>
             {% endfor %}
         </section>
+
+        <section class="panel">
+            <h2>Retrieval chunks</h2>
+            <p>
+                Chunk IDs are deterministic for identical document bytes,
+                page structure, configuration, and normalized Markdown.
+            </p>
+
+            <button
+                id="download-chunks"
+                type="button"
+                data-filename="chunks-{{ document.sha256[:12] }}.jsonl"
+            >
+                Download chunks as JSONL
+            </button>
+
+            <textarea id="chunks-jsonl" hidden>{{ chunks_jsonl }}</textarea>
+
+            {% for chunk in chunks %}
+            <article class="chunk">
+                <h3>Chunk {{ chunk.chunk_index }}</h3>
+                <dl class="metadata">
+                    <dt>Chunk ID</dt>
+                    <dd><code>{{ chunk.chunk_id }}</code></dd>
+                    <dt>Page</dt>
+                    <dd>{{ chunk.page_start }}</dd>
+                    <dt>Characters</dt>
+                    <dd>{{ chunk.char_count }}</dd>
+                    <dt>Markdown blocks</dt>
+                    <dd>{{ chunk.block_count }}</dd>
+                </dl>
+                <pre>{{ chunk.text }}</pre>
+            </article>
+            {% endfor %}
+        </section>
+
+        <script>
+            "use strict";
+
+            const downloadButton =
+                document.getElementById("download-chunks");
+            const jsonlText =
+                document.getElementById("chunks-jsonl").value;
+
+            downloadButton.addEventListener("click", () => {
+                const blob = new Blob(
+                    [jsonlText],
+                    {type: "application/x-ndjson;charset=utf-8"},
+                );
+                const objectUrl = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+
+                link.href = objectUrl;
+                link.download = downloadButton.dataset.filename;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+
+                URL.revokeObjectURL(objectUrl);
+            });
+        </script>
         {% endif %}
     </main>
 </body>
