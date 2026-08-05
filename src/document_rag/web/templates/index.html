@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1"
+    >
+    <title>Document RAG ingestion</title>
+    <style>
+        :root {
+            color-scheme: light dark;
+            font-family: system-ui, sans-serif;
+        }
+
+        body {
+            max-width: 960px;
+            margin: 0 auto;
+            padding: 2rem;
+            line-height: 1.5;
+        }
+
+        form,
+        .panel {
+            border: 1px solid #7776;
+            border-radius: 0.5rem;
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+
+        button {
+            margin-top: 1rem;
+            padding: 0.6rem 1rem;
+        }
+
+        .error {
+            border-color: #c33;
+        }
+
+        pre {
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
+
+        details {
+            margin: 1rem 0;
+        }
+
+        code {
+            font-family: ui-monospace, monospace;
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <h1>Document ingestion</h1>
+        <p>
+            Upload one PDF. The server validates it and sends it to
+            LlamaParse for page-level Markdown extraction.
+        </p>
+
+        <form
+            action="/documents/parse"
+            method="post"
+            enctype="multipart/form-data"
+        >
+            <label for="file">
+                PDF file, maximum {{ max_upload_mb }} MB
+            </label>
+            <br>
+            <input
+                id="file"
+                name="file"
+                type="file"
+                accept="application/pdf,.pdf"
+                required
+            >
+            <br>
+            <button type="submit">Parse document</button>
+        </form>
+
+        {% if error %}
+        <section class="panel error">
+            <h2>Parsing failed</h2>
+            <p>{{ error }}</p>
+        </section>
+        {% endif %}
+
+        {% if document %}
+        <section class="panel">
+            <h2>Parsed document</h2>
+            <dl>
+                <dt>Filename</dt>
+                <dd>{{ document.filename }}</dd>
+                <dt>Document ID</dt>
+                <dd><code>{{ document.document_id }}</code></dd>
+                <dt>Pages</dt>
+                <dd>{{ document.pages | length }}</dd>
+            </dl>
+
+            {% for page in document.pages %}
+            <details {% if loop.first %}open{% endif %}>
+                <summary>Page {{ page.page_number }}</summary>
+                <pre>{{ page.markdown }}</pre>
+            </details>
+            {% endfor %}
+        </section>
+        {% endif %}
+    </main>
+</body>
+</html>
