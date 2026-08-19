@@ -186,18 +186,37 @@ class MarkdownChunker:
 
         chunks: list[DocumentChunk] = []
         chunk_index = 0
+        seen_source_element_ids: set[str] = set()
 
         for page in document.pages:
             normalized_markdown = _normalize_markdown(page.markdown)
 
             if not normalized_markdown:
+                if page.source_element_ids:
+                    raise DocumentChunkingError(
+                        "An empty parsed page cannot contain source element IDs."
+                    )
+
                 continue
 
             blocks = _build_lineaged_blocks(
                 _split_markdown_blocks(normalized_markdown),
                 document_id=document.document_id,
                 page_number=page.page_number,
+                source_element_ids=page.source_element_ids,
             )
+            page_source_element_ids = {
+                element_id for block in blocks for element_id in block.source_element_ids
+            }
+            duplicate_source_element_ids = seen_source_element_ids & page_source_element_ids
+
+            if duplicate_source_element_ids:
+                duplicate = min(duplicate_source_element_ids)
+                raise DocumentChunkingError(
+                    f"Duplicate source element ID across pages: {duplicate!r}."
+                )
+
+            seen_source_element_ids.update(page_source_element_ids)
             blocks = _attach_headings(blocks)
             blocks = tuple(
                 fragment
@@ -310,23 +329,42 @@ def _build_lineaged_blocks(
     *,
     document_id: str,
     page_number: int,
+    source_element_ids: tuple[str, ...],
 ) -> tuple[_LineagedBlock, ...]:
-    """Assign stable source-element IDs before any chunk transformations."""
+    """Preserve supplied source IDs or derive stable IDs for Markdown blocks."""
+
+    if source_element_ids and len(source_element_ids) != len(blocks):
+        raise DocumentChunkingError(
+            "Parsed page source_element_ids must match its Markdown block count."
+        )
+
+    resolved_source_element_ids = source_element_ids or tuple(
+        _build_source_element_id(
+            document_id=document_id,
+            page_number=page_number,
+            element_index=element_index,
+            text=block,
+        )
+        for element_index, block in enumerate(blocks)
+    )
+
+    if any(not element_id.strip() for element_id in resolved_source_element_ids):
+        raise DocumentChunkingError("Source element IDs cannot be empty.")
+
+    if len(set(resolved_source_element_ids)) != len(resolved_source_element_ids):
+        raise DocumentChunkingError("Source element IDs must be unique within a page.")
 
     return tuple(
         _LineagedBlock(
             text=block,
-            source_element_ids=(
-                _build_source_element_id(
-                    document_id=document_id,
-                    page_number=page_number,
-                    element_index=element_index,
-                    text=block,
-                ),
-            ),
+            source_element_ids=(element_id,),
             overlap_eligible=_is_overlap_eligible(block),
         )
-        for element_index, block in enumerate(blocks)
+        for block, element_id in zip(
+            blocks,
+            resolved_source_element_ids,
+            strict=True,
+        )
     )
 
 

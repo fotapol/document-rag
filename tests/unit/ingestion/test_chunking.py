@@ -75,7 +75,11 @@ def build_character_chunker(
     )
 
 
-def build_document(markdown: str) -> ParsedDocument:
+def build_document(
+    markdown: str,
+    *,
+    source_element_ids: tuple[str, ...] = (),
+) -> ParsedDocument:
     """Create one deterministic parsed document fixture."""
 
     return ParsedDocument(
@@ -86,6 +90,7 @@ def build_document(markdown: str) -> ParsedDocument:
             ParsedPage(
                 page_number=1,
                 markdown=markdown,
+                source_element_ids=source_element_ids,
             ),
         ),
     )
@@ -213,6 +218,87 @@ def test_chunks_preserve_document_and_page_metadata() -> None:
     assert chunks[0].text
     assert chunks[0].char_count == len(chunks[0].text)
     assert chunks[0].token_count == RegexTokenCounter().count(chunks[0].text)
+
+
+def test_chunks_preserve_upstream_source_element_ids() -> None:
+    """Caller-supplied element IDs should survive every chunk transformation."""
+
+    document = build_document(
+        "# Revenue\nRevenue increased by 12%.",
+        source_element_ids=("heading:revenue", "paragraph:revenue"),
+    )
+    chunks = MarkdownChunker().chunk(document)
+
+    assert len(chunks) == 1
+    assert chunks[0].source_element_ids == (
+        "heading:revenue",
+        "paragraph:revenue",
+    )
+
+
+def test_chunker_rejects_misaligned_upstream_source_element_ids() -> None:
+    """Every supplied source ID must correspond to one parsed Markdown block."""
+
+    document = build_document(
+        "# Revenue\n\nRevenue increased by 12%.",
+        source_element_ids=("heading:revenue",),
+    )
+
+    with pytest.raises(
+        DocumentChunkingError,
+        match="must match its Markdown block count",
+    ):
+        MarkdownChunker().chunk(document)
+
+
+@pytest.mark.parametrize(
+    ("source_element_ids", "message"),
+    [
+        (("", "paragraph:revenue"), "cannot be empty"),
+        (("element:duplicate", "element:duplicate"), "unique within a page"),
+    ],
+)
+def test_chunker_rejects_invalid_upstream_source_element_ids(
+    source_element_ids: tuple[str, ...],
+    message: str,
+) -> None:
+    """Supplied source IDs must be non-empty and unique."""
+
+    document = build_document(
+        "# Revenue\n\nRevenue increased by 12%.",
+        source_element_ids=source_element_ids,
+    )
+
+    with pytest.raises(DocumentChunkingError, match=message):
+        MarkdownChunker().chunk(document)
+
+
+def test_chunker_rejects_duplicate_source_element_ids_across_pages() -> None:
+    """A source element must identify only one location in a document."""
+
+    document = ParsedDocument(
+        document_id="sha256:test-document",
+        filename="report.pdf",
+        sha256="test-document",
+        pages=(
+            ParsedPage(
+                page_number=1,
+                markdown="First page.",
+                source_element_ids=("paragraph:duplicate",),
+            ),
+            ParsedPage(
+                page_number=2,
+                markdown="Second page.",
+                source_element_ids=("paragraph:duplicate",),
+            ),
+        ),
+    )
+
+    with pytest.raises(
+        DocumentChunkingError,
+        match="Duplicate source element ID across pages",
+    ):
+        MarkdownChunker().chunk(document)
 
 
 def test_small_markdown_table_remains_in_one_chunk() -> None:
