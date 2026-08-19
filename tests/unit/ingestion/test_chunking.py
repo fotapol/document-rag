@@ -61,6 +61,7 @@ def build_character_chunker(
     *,
     target_tokens: int,
     max_tokens: int,
+    overlap_tokens: int = 0,
 ) -> MarkdownChunker:
     """Build a chunker whose existing structure fixtures use exact lengths."""
 
@@ -68,6 +69,7 @@ def build_character_chunker(
         ChunkingConfig(
             target_tokens=target_tokens,
             max_tokens=max_tokens,
+            overlap_tokens=overlap_tokens,
         ),
         token_counter=CharacterTokenCounter(),
     )
@@ -114,6 +116,7 @@ def test_fixed_token_chunking_enforces_configured_limit() -> None:
         ChunkingConfig(
             target_tokens=4,
             max_tokens=4,
+            overlap_tokens=0,
         )
     ).chunk(build_document("Revenue grew rapidly. Expenses stayed flat."))
 
@@ -155,6 +158,27 @@ def test_chunking_config_rejects_invalid_token_limits(
         )
 
 
+@pytest.mark.parametrize(
+    ("overlap_tokens", "message"),
+    [
+        (-1, "overlap_tokens must be non-negative"),
+        (4, "overlap_tokens must be smaller than target_tokens"),
+    ],
+)
+def test_chunking_config_rejects_invalid_overlap(
+    overlap_tokens: int,
+    message: str,
+) -> None:
+    """Overlap must be bounded by the configured chunk target."""
+
+    with pytest.raises(ValueError, match=message):
+        ChunkingConfig(
+            target_tokens=4,
+            max_tokens=8,
+            overlap_tokens=overlap_tokens,
+        )
+
+
 def test_chunker_rejects_counter_that_cannot_measure_text() -> None:
     """A broken injected counter must not silently bypass token limits."""
 
@@ -162,6 +186,7 @@ def test_chunker_rejects_counter_that_cannot_measure_text() -> None:
         ChunkingConfig(
             target_tokens=1,
             max_tokens=1,
+            overlap_tokens=0,
         ),
         token_counter=ZeroTokenCounter(),
     )
@@ -228,6 +253,7 @@ def test_large_markdown_table_repeats_heading_and_complete_rows() -> None:
     chunks = build_character_chunker(
         target_tokens=120,
         max_tokens=180,
+        overlap_tokens=20,
     ).chunk(build_document(table))
 
     assert len(chunks) > 1
@@ -244,6 +270,81 @@ def test_large_markdown_table_repeats_heading_and_complete_rows() -> None:
         chunk_rows.extend(rows)
 
     assert chunk_rows == data_rows
+
+
+def test_overlap_repeats_prose_within_the_same_section() -> None:
+    """Later chunks should include bounded trailing prose and one heading."""
+
+    document = build_document(
+        "# Metrics\n\nalpha one two three.\n\nbeta four five six.\n\ngamma seven eight nine."
+    )
+    chunker = MarkdownChunker(
+        ChunkingConfig(
+            target_tokens=7,
+            max_tokens=12,
+            overlap_tokens=3,
+        )
+    )
+    chunks = chunker.chunk(document)
+
+    assert [chunk.text for chunk in chunks] == [
+        "# Metrics\n\nalpha one two three.",
+        "# Metrics\n\ntwo three.\n\nbeta four five six.",
+        "# Metrics\n\nfive six.\n\ngamma seven eight nine.",
+    ]
+    assert all(chunk.text.count("# Metrics") == 1 for chunk in chunks)
+    assert all(chunk.token_count <= 12 for chunk in chunks)
+    assert len(chunks[1].source_element_ids) == 3
+    assert chunker.chunk(document) == chunks
+
+
+def test_overlap_does_not_cross_section_boundaries() -> None:
+    """A new section must not inherit prose from the previous section."""
+
+    chunks = MarkdownChunker(
+        ChunkingConfig(
+            target_tokens=7,
+            max_tokens=12,
+            overlap_tokens=3,
+        )
+    ).chunk(build_document("# Assets\nalpha one two three.\n\n# Liabilities\nbeta four five six."))
+
+    assert len(chunks) == 2
+    assert chunks[0].text.startswith("# Assets")
+    assert chunks[1].text == "# Liabilities\n\nbeta four five six."
+    assert "alpha" not in chunks[1].text
+
+
+def test_nested_section_headings_are_propagated_to_every_chunk() -> None:
+    """Parent and child headings should remain attached across a section."""
+
+    chunks = MarkdownChunker(
+        ChunkingConfig(
+            target_tokens=8,
+            max_tokens=12,
+            overlap_tokens=0,
+        )
+    ).chunk(build_document("# Annual Report\n\n## Revenue\n\nalpha one two.\n\nbeta three four."))
+
+    assert len(chunks) == 2
+    assert all(chunk.text.startswith("# Annual Report\n\n## Revenue\n\n") for chunk in chunks)
+
+
+def test_oversized_prose_fragments_repeat_their_section_heading() -> None:
+    """Splitting one long paragraph must retain its heading on every fragment."""
+
+    paragraph = " ".join(
+        f"Revenue increased in reporting period {period}." for period in range(1, 6)
+    )
+    chunks = build_character_chunker(
+        target_tokens=60,
+        max_tokens=70,
+    ).chunk(build_document(f"# Notes\n\n{paragraph}"))
+
+    assert len(chunks) > 1
+    assert all(chunk.text.startswith("# Notes\n\n") for chunk in chunks)
+    assert all(chunk.char_count <= 70 for chunk in chunks)
+    assert all(len(chunk.source_element_ids) == 2 for chunk in chunks)
 
 
 def test_split_table_fragments_preserve_source_element_lineage() -> None:

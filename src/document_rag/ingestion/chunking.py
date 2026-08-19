@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
+from itertools import pairwise
 from typing import Protocol
 
 from document_rag.ingestion.llamaparse import ParsedDocument
@@ -98,6 +99,7 @@ class ChunkingConfig:
 
     target_tokens: int = 300
     max_tokens: int = 450
+    overlap_tokens: int = 50
 
     def __post_init__(self) -> None:
         """Reject invalid limits before chunking begins."""
@@ -107,6 +109,12 @@ class ChunkingConfig:
 
         if self.max_tokens < self.target_tokens:
             raise ValueError("max_tokens must be greater than or equal to target_tokens.")
+
+        if self.overlap_tokens < 0:
+            raise ValueError("overlap_tokens must be non-negative.")
+
+        if self.overlap_tokens >= self.target_tokens:
+            raise ValueError("overlap_tokens must be smaller than target_tokens.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,6 +159,9 @@ class _LineagedBlock:
 
     text: str
     source_element_ids: tuple[str, ...]
+    section_text: str = ""
+    section_element_ids: tuple[str, ...] = ()
+    overlap_eligible: bool = True
 
 
 class MarkdownChunker:
@@ -202,9 +213,10 @@ class MarkdownChunker:
                 blocks,
                 target_tokens=self._config.target_tokens,
                 max_tokens=self._config.max_tokens,
+                overlap_tokens=self._config.overlap_tokens,
                 token_counter=self._token_counter,
             ):
-                text = "\n\n".join(block.text for block in chunk_blocks).strip()
+                text = _render_blocks(chunk_blocks)
 
                 if not text:
                     continue
@@ -266,6 +278,33 @@ def _normalize_markdown(markdown: str) -> str:
     return "\n".join(lines).strip()
 
 
+def _join_context(context: str, text: str) -> str:
+    """Join optional section context and block text exactly once."""
+
+    if context:
+        return f"{context}\n\n{text}".strip()
+
+    return text.strip()
+
+
+def _render_blocks(blocks: tuple[_LineagedBlock, ...]) -> str:
+    """Render blocks while emitting each active section heading once."""
+
+    rendered: list[str] = []
+    active_section_ids: tuple[str, ...] | None = None
+
+    for block in blocks:
+        if block.section_element_ids != active_section_ids:
+            if block.section_text:
+                rendered.append(block.section_text)
+
+            active_section_ids = block.section_element_ids
+
+        rendered.append(block.text)
+
+    return "\n\n".join(rendered).strip()
+
+
 def _build_lineaged_blocks(
     blocks: tuple[str, ...],
     *,
@@ -285,6 +324,7 @@ def _build_lineaged_blocks(
                     text=block,
                 ),
             ),
+            overlap_eligible=_is_overlap_eligible(block),
         )
         for element_index, block in enumerate(blocks)
     )
@@ -317,6 +357,11 @@ def _split_markdown_blocks(markdown: str) -> tuple[str, ...]:
             blocks.append(block)
             continue
 
+        if _is_heading(lines[index]):
+            blocks.append(lines[index].strip())
+            index += 1
+            continue
+
         paragraph_lines: list[str] = []
 
         while index < len(lines):
@@ -327,6 +372,7 @@ def _split_markdown_blocks(markdown: str) -> tuple[str, ...]:
                 _is_fence_start(lines[index])
                 or _is_html_table_start(lines[index])
                 or _is_markdown_table_start(lines, index)
+                or _is_heading(lines[index])
             ):
                 break
 
@@ -344,34 +390,40 @@ def _split_markdown_blocks(markdown: str) -> tuple[str, ...]:
 def _attach_headings(
     blocks: tuple[_LineagedBlock, ...],
 ) -> tuple[_LineagedBlock, ...]:
-    """Attach a standalone Markdown heading to the following block."""
+    """Attach active Markdown heading context to every section block."""
 
     attached: list[_LineagedBlock] = []
-    pending_heading: _LineagedBlock | None = None
+    active_headings: list[tuple[int, _LineagedBlock]] = []
+    headings_need_content = False
 
     for block in blocks:
-        if _is_heading(block.text):
-            if pending_heading is not None:
-                attached.append(pending_heading)
-            pending_heading = block
+        heading_level = _heading_level(block.text)
+
+        if heading_level is not None:
+            active_headings = [heading for heading in active_headings if heading[0] < heading_level]
+            active_headings.append((heading_level, block))
+            headings_need_content = True
             continue
 
-        if pending_heading is not None:
-            attached.append(
-                _LineagedBlock(
-                    text=f"{pending_heading.text}\n\n{block.text}",
-                    source_element_ids=(
-                        *pending_heading.source_element_ids,
-                        *block.source_element_ids,
-                    ),
-                )
+        section_blocks = tuple(heading[1] for heading in active_headings)
+        attached.append(
+            replace(
+                block,
+                section_text="\n\n".join(heading.text for heading in section_blocks),
+                section_element_ids=_collect_source_element_ids(section_blocks),
             )
-            pending_heading = None
-        else:
-            attached.append(block)
+        )
+        headings_need_content = False
 
-    if pending_heading is not None:
-        attached.append(pending_heading)
+    if headings_need_content:
+        section_blocks = tuple(heading[1] for heading in active_headings)
+        attached.append(
+            _LineagedBlock(
+                text="\n\n".join(heading.text for heading in section_blocks),
+                source_element_ids=_collect_source_element_ids(section_blocks),
+                overlap_eligible=False,
+            )
+        )
 
     return tuple(attached)
 
@@ -384,7 +436,7 @@ def _split_oversized_block(
 ) -> tuple[_LineagedBlock, ...]:
     """Split an oversized block while preserving table structure."""
 
-    if _count_tokens(block.text, token_counter) <= max_tokens:
+    if _count_tokens(_render_blocks((block,)), token_counter) <= max_tokens:
         return (block,)
 
     html_parts = _extract_html_table(block.text)
@@ -394,7 +446,7 @@ def _split_oversized_block(
         fragments = _split_large_html_table(
             table,
             max_tokens,
-            prefix=prefix,
+            prefix=_join_context(block.section_text, prefix),
             token_counter=token_counter,
         )
     else:
@@ -405,23 +457,18 @@ def _split_oversized_block(
             fragments = _split_large_markdown_table(
                 table,
                 max_tokens,
-                prefix=prefix,
+                prefix=_join_context(block.section_text, prefix),
                 token_counter=token_counter,
             )
         else:
             fragments = _split_large_text(
                 block.text,
                 max_tokens,
+                prefix=block.section_text,
                 token_counter=token_counter,
             )
 
-    return tuple(
-        _LineagedBlock(
-            text=fragment,
-            source_element_ids=block.source_element_ids,
-        )
-        for fragment in fragments
-    )
+    return tuple(replace(block, text=fragment) for fragment in fragments)
 
 
 def _split_large_markdown_table(
@@ -439,6 +486,7 @@ def _split_large_markdown_table(
         return _split_large_text(
             table,
             max_tokens,
+            prefix=prefix,
             token_counter=token_counter,
         )
 
@@ -447,21 +495,21 @@ def _split_large_markdown_table(
     fragments: list[str] = []
     current_rows: list[str] = []
 
+    def render_table(fragment_rows: list[str]) -> str:
+        """Render one complete table fragment."""
+
+        return "\n".join([*header, *fragment_rows])
+
     def render(fragment_rows: list[str]) -> str:
-        """Render one complete table fragment with repeated context."""
+        """Render one complete table fragment with section context."""
 
-        rendered_table = "\n".join([*header, *fragment_rows])
-
-        if prefix:
-            return f"{prefix}\n\n{rendered_table}"
-
-        return rendered_table
+        return _join_context(prefix, render_table(fragment_rows))
 
     for row in rows:
         candidate = render([*current_rows, row])
 
         if current_rows and _count_tokens(candidate, token_counter) > max_tokens:
-            fragments.append(render(current_rows))
+            fragments.append(render_table(current_rows))
             current_rows = [row]
         else:
             current_rows.append(row)
@@ -472,7 +520,7 @@ def _split_large_markdown_table(
             raise DocumentChunkingError("A Markdown table row exceeds max_tokens.")
 
     if current_rows:
-        fragments.append(render(current_rows))
+        fragments.append(render_table(current_rows))
 
     return tuple(fragment for fragment in fragments if fragment.strip())
 
@@ -501,8 +549,8 @@ def _split_large_html_table(
     if not rows:
         raise DocumentChunkingError("An oversized HTML table contains no complete rows.")
 
-    def render(fragment_rows: list[str]) -> str:
-        """Render one complete table fragment with repeated context."""
+    def render_table(fragment_rows: list[str]) -> str:
+        """Render one complete table fragment."""
 
         table_parts = [table_open]
 
@@ -517,12 +565,12 @@ def _split_large_html_table(
                 "</table>",
             ]
         )
-        rendered_table = "\n".join(table_parts)
+        return "\n".join(table_parts)
 
-        if prefix:
-            return f"{prefix}\n\n{rendered_table}"
+    def render(fragment_rows: list[str]) -> str:
+        """Render one complete table fragment with section context."""
 
-        return rendered_table
+        return _join_context(prefix, render_table(fragment_rows))
 
     fragments: list[str] = []
     current_rows: list[str] = []
@@ -531,7 +579,7 @@ def _split_large_html_table(
         candidate = render([*current_rows, row])
 
         if current_rows and _count_tokens(candidate, token_counter) > max_tokens:
-            fragments.append(render(current_rows))
+            fragments.append(render_table(current_rows))
             current_rows = [row]
         else:
             current_rows.append(row)
@@ -540,7 +588,7 @@ def _split_large_html_table(
             raise DocumentChunkingError("An HTML table row exceeds max_tokens.")
 
     if current_rows:
-        fragments.append(render(current_rows))
+        fragments.append(render_table(current_rows))
 
     return tuple(fragments)
 
@@ -549,9 +597,10 @@ def _split_large_text(
     text: str,
     max_tokens: int,
     *,
+    prefix: str,
     token_counter: TokenCounter,
 ) -> tuple[str, ...]:
-    """Split long prose by sentences and then by safe whitespace."""
+    """Split long prose while reserving room for repeated section context."""
 
     sentences = [
         sentence.strip() for sentence in _SENTENCE_BOUNDARY_PATTERN.split(text) if sentence.strip()
@@ -561,6 +610,7 @@ def _split_large_text(
         return _hard_wrap(
             text,
             max_tokens,
+            prefix=prefix,
             token_counter=token_counter,
         )
 
@@ -570,7 +620,9 @@ def _split_large_text(
     for sentence in sentences:
         candidate = sentence if not current else f"{current} {sentence}"
 
-        if _count_tokens(candidate, token_counter) <= max_tokens:
+        rendered_candidate = _join_context(prefix, candidate)
+
+        if _count_tokens(rendered_candidate, token_counter) <= max_tokens:
             current = candidate
             continue
 
@@ -578,13 +630,16 @@ def _split_large_text(
             fragments.append(current)
             current = ""
 
-        if _count_tokens(sentence, token_counter) <= max_tokens:
+        rendered_sentence = _join_context(prefix, sentence)
+
+        if _count_tokens(rendered_sentence, token_counter) <= max_tokens:
             current = sentence
         else:
             fragments.extend(
                 _hard_wrap(
                     sentence,
                     max_tokens,
+                    prefix=prefix,
                     token_counter=token_counter,
                 )
             )
@@ -599,6 +654,7 @@ def _hard_wrap(
     text: str,
     max_tokens: int,
     *,
+    prefix: str,
     token_counter: TokenCounter,
 ) -> tuple[str, ...]:
     """Split text at nearby whitespace while enforcing a token maximum."""
@@ -606,10 +662,17 @@ def _hard_wrap(
     remaining = text.strip()
     fragments: list[str] = []
 
-    while _count_tokens(remaining, token_counter) > max_tokens:
+    while (
+        _count_tokens(
+            _join_context(prefix, remaining),
+            token_counter,
+        )
+        > max_tokens
+    ):
         split_at = _largest_prefix_within_token_limit(
             remaining,
             max_tokens,
+            prefix=prefix,
             token_counter=token_counter,
         )
         whitespace_split = _last_whitespace_before(remaining, split_at)
@@ -634,6 +697,7 @@ def _largest_prefix_within_token_limit(
     text: str,
     max_tokens: int,
     *,
+    prefix: str,
     token_counter: TokenCounter,
 ) -> int:
     """Find the longest character prefix accepted by the token counter."""
@@ -645,8 +709,9 @@ def _largest_prefix_within_token_limit(
     while lower <= upper:
         midpoint = (lower + upper) // 2
         candidate = text[:midpoint].rstrip()
+        rendered_candidate = _join_context(prefix, candidate)
 
-        if candidate and _count_tokens(candidate, token_counter) <= max_tokens:
+        if candidate and _count_tokens(rendered_candidate, token_counter) <= max_tokens:
             best = midpoint
             lower = midpoint + 1
         else:
@@ -690,15 +755,17 @@ def _pack_blocks(
     *,
     target_tokens: int,
     max_tokens: int,
+    overlap_tokens: int,
     token_counter: TokenCounter,
 ) -> tuple[tuple[_LineagedBlock, ...], ...]:
-    """Pack blocks into chunks while enforcing the hard maximum."""
+    """Pack blocks and add same-section prose overlap between chunks."""
 
     packed: list[tuple[_LineagedBlock, ...]] = []
     current: list[_LineagedBlock] = []
 
     for block in blocks:
-        candidate = "\n\n".join(item.text for item in [*current, block])
+        candidate_blocks = (*current, block)
+        candidate = _render_blocks(candidate_blocks)
 
         if current and _count_tokens(candidate, token_counter) > target_tokens:
             packed.append(tuple(current))
@@ -706,7 +773,7 @@ def _pack_blocks(
         else:
             current.append(block)
 
-        current_text = "\n\n".join(item.text for item in current)
+        current_text = _render_blocks(tuple(current))
 
         if _count_tokens(current_text, token_counter) > max_tokens:
             raise DocumentChunkingError("Internal chunking error: a chunk exceeded max_tokens.")
@@ -714,7 +781,156 @@ def _pack_blocks(
     if current:
         packed.append(tuple(current))
 
-    return tuple(packed)
+    return _apply_overlap(
+        tuple(packed),
+        overlap_tokens=overlap_tokens,
+        max_tokens=max_tokens,
+        token_counter=token_counter,
+    )
+
+
+def _apply_overlap(
+    packed: tuple[tuple[_LineagedBlock, ...], ...],
+    *,
+    overlap_tokens: int,
+    max_tokens: int,
+    token_counter: TokenCounter,
+) -> tuple[tuple[_LineagedBlock, ...], ...]:
+    """Add bounded overlap without crossing sections or structural blocks."""
+
+    if overlap_tokens == 0 or len(packed) < 2:
+        return packed
+
+    overlapped = [packed[0]]
+
+    for previous, current in pairwise(packed):
+        overlap = _select_overlap_blocks(
+            previous,
+            current,
+            overlap_tokens=overlap_tokens,
+            max_tokens=max_tokens,
+            token_counter=token_counter,
+        )
+        overlapped.append((*overlap, *current))
+
+    return tuple(overlapped)
+
+
+def _select_overlap_blocks(
+    previous: tuple[_LineagedBlock, ...],
+    current: tuple[_LineagedBlock, ...],
+    *,
+    overlap_tokens: int,
+    max_tokens: int,
+    token_counter: TokenCounter,
+) -> tuple[_LineagedBlock, ...]:
+    """Select the largest eligible suffix that fits the overlap budget."""
+
+    first_current = current[0]
+
+    if not first_current.overlap_eligible:
+        return ()
+
+    section_element_ids = first_current.section_element_ids
+    selected: list[_LineagedBlock] = []
+
+    for block in reversed(previous):
+        if not block.overlap_eligible or block.section_element_ids != section_element_ids:
+            break
+
+        candidate = (block, *selected)
+
+        if _overlap_fits(
+            candidate,
+            current,
+            overlap_tokens=overlap_tokens,
+            max_tokens=max_tokens,
+            token_counter=token_counter,
+        ):
+            selected.insert(0, block)
+            continue
+
+        trimmed = _trim_block_for_overlap(
+            block,
+            tuple(selected),
+            current,
+            overlap_tokens=overlap_tokens,
+            max_tokens=max_tokens,
+            token_counter=token_counter,
+        )
+
+        if trimmed is not None:
+            selected.insert(0, trimmed)
+
+        break
+
+    return tuple(selected)
+
+
+def _trim_block_for_overlap(
+    block: _LineagedBlock,
+    selected: tuple[_LineagedBlock, ...],
+    current: tuple[_LineagedBlock, ...],
+    *,
+    overlap_tokens: int,
+    max_tokens: int,
+    token_counter: TokenCounter,
+) -> _LineagedBlock | None:
+    """Trim one prose block to its longest suffix that fits overlap."""
+
+    text = block.text.strip()
+    whitespace_starts = [
+        match.end() for match in re.finditer(r"\s+", text) if match.end() < len(text)
+    ]
+    candidate_starts = [*whitespace_starts, *range(1, len(text))]
+    seen_starts: set[int] = set()
+
+    for start in candidate_starts:
+        if start in seen_starts:
+            continue
+
+        seen_starts.add(start)
+        suffix = text[start:].strip()
+
+        if not suffix:
+            continue
+
+        trimmed = replace(block, text=suffix)
+        overlap = (trimmed, *selected)
+
+        if _overlap_fits(
+            overlap,
+            current,
+            overlap_tokens=overlap_tokens,
+            max_tokens=max_tokens,
+            token_counter=token_counter,
+        ):
+            return trimmed
+
+    return None
+
+
+def _overlap_fits(
+    overlap: tuple[_LineagedBlock, ...],
+    current: tuple[_LineagedBlock, ...],
+    *,
+    overlap_tokens: int,
+    max_tokens: int,
+    token_counter: TokenCounter,
+) -> bool:
+    """Return whether overlap fits both its budget and the chunk maximum."""
+
+    current_token_count = _count_tokens(
+        _render_blocks(current),
+        token_counter,
+    )
+    combined_token_count = _count_tokens(
+        _render_blocks((*overlap, *current)),
+        token_counter,
+    )
+    added_token_count = max(0, combined_token_count - current_token_count)
+
+    return added_token_count <= overlap_tokens and combined_token_count <= max_tokens
 
 
 def _collect_source_element_ids(
@@ -723,7 +939,14 @@ def _collect_source_element_ids(
     """Collect source-element IDs in first-occurrence order."""
 
     return tuple(
-        dict.fromkeys(element_id for block in blocks for element_id in block.source_element_ids)
+        dict.fromkeys(
+            element_id
+            for block in blocks
+            for element_id in (
+                *block.section_element_ids,
+                *block.source_element_ids,
+            )
+        )
     )
 
 
@@ -798,8 +1021,31 @@ def _extract_markdown_table(
 def _is_heading(block: str) -> bool:
     """Return whether a block is one standalone ATX heading."""
 
+    return _heading_level(block) is not None
+
+
+def _heading_level(block: str) -> int | None:
+    """Return the ATX heading level for one standalone heading block."""
+
     lines = block.splitlines()
-    return len(lines) == 1 and bool(re.match(r"^\s{0,3}#{1,6}\s+\S", lines[0]))
+
+    if len(lines) != 1:
+        return None
+
+    match = re.match(r"^\s{0,3}(#{1,6})\s+\S", lines[0])
+    return len(match.group(1)) if match is not None else None
+
+
+def _is_overlap_eligible(block: str) -> bool:
+    """Return whether a source block may be repeated as prose overlap."""
+
+    first_line = block.splitlines()[0]
+    return (
+        not _is_heading(block)
+        and not _is_fence_start(first_line)
+        and _extract_html_table(block) is None
+        and _extract_markdown_table(block) is None
+    )
 
 
 def _is_fence_start(line: str) -> bool:
