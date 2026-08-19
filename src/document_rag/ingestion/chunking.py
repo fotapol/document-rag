@@ -72,6 +72,7 @@ class DocumentChunk:
     chunk_index: int
     page_start: int
     page_end: int
+    source_element_ids: tuple[str, ...]
     text: str
     char_count: int
     block_count: int
@@ -87,10 +88,19 @@ class DocumentChunk:
             "chunk_index": self.chunk_index,
             "page_start": self.page_start,
             "page_end": self.page_end,
+            "source_element_ids": list(self.source_element_ids),
             "text": self.text,
             "char_count": self.char_count,
             "block_count": self.block_count,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class _LineagedBlock:
+    """Markdown block paired with the source elements that produced it."""
+
+    text: str
+    source_element_ids: tuple[str, ...]
 
 
 class MarkdownChunker:
@@ -119,7 +129,11 @@ class MarkdownChunker:
             if not normalized_markdown:
                 continue
 
-            blocks = _split_markdown_blocks(normalized_markdown)
+            blocks = _build_lineaged_blocks(
+                _split_markdown_blocks(normalized_markdown),
+                document_id=document.document_id,
+                page_number=page.page_number,
+            )
             blocks = _attach_headings(blocks)
             blocks = tuple(
                 fragment
@@ -135,7 +149,7 @@ class MarkdownChunker:
                 target_chars=self._config.target_chars,
                 max_chars=self._config.max_chars,
             ):
-                text = "\n\n".join(chunk_blocks).strip()
+                text = "\n\n".join(block.text for block in chunk_blocks).strip()
 
                 if not text:
                     continue
@@ -156,6 +170,7 @@ class MarkdownChunker:
                         chunk_index=chunk_index,
                         page_start=page.page_number,
                         page_end=page.page_number,
+                        source_element_ids=_collect_source_element_ids(chunk_blocks),
                         text=text,
                         char_count=len(text),
                         block_count=len(chunk_blocks),
@@ -193,6 +208,30 @@ def _normalize_markdown(markdown: str) -> str:
     normalized = markdown.replace("\r\n", "\n").replace("\r", "\n")
     lines = [line.rstrip() for line in normalized.splitlines()]
     return "\n".join(lines).strip()
+
+
+def _build_lineaged_blocks(
+    blocks: tuple[str, ...],
+    *,
+    document_id: str,
+    page_number: int,
+) -> tuple[_LineagedBlock, ...]:
+    """Assign stable source-element IDs before any chunk transformations."""
+
+    return tuple(
+        _LineagedBlock(
+            text=block,
+            source_element_ids=(
+                _build_source_element_id(
+                    document_id=document_id,
+                    page_number=page_number,
+                    element_index=element_index,
+                    text=block,
+                ),
+            ),
+        )
+        for element_index, block in enumerate(blocks)
+    )
 
 
 def _split_markdown_blocks(markdown: str) -> tuple[str, ...]:
@@ -246,21 +285,31 @@ def _split_markdown_blocks(markdown: str) -> tuple[str, ...]:
     return tuple(blocks)
 
 
-def _attach_headings(blocks: tuple[str, ...]) -> tuple[str, ...]:
+def _attach_headings(
+    blocks: tuple[_LineagedBlock, ...],
+) -> tuple[_LineagedBlock, ...]:
     """Attach a standalone Markdown heading to the following block."""
 
-    attached: list[str] = []
-    pending_heading: str | None = None
+    attached: list[_LineagedBlock] = []
+    pending_heading: _LineagedBlock | None = None
 
     for block in blocks:
-        if _is_heading(block):
+        if _is_heading(block.text):
             if pending_heading is not None:
                 attached.append(pending_heading)
             pending_heading = block
             continue
 
         if pending_heading is not None:
-            attached.append(f"{pending_heading}\n\n{block}")
+            attached.append(
+                _LineagedBlock(
+                    text=f"{pending_heading.text}\n\n{block.text}",
+                    source_element_ids=(
+                        *pending_heading.source_element_ids,
+                        *block.source_element_ids,
+                    ),
+                )
+            )
             pending_heading = None
         else:
             attached.append(block)
@@ -272,35 +321,43 @@ def _attach_headings(blocks: tuple[str, ...]) -> tuple[str, ...]:
 
 
 def _split_oversized_block(
-    block: str,
+    block: _LineagedBlock,
     max_chars: int,
-) -> tuple[str, ...]:
+) -> tuple[_LineagedBlock, ...]:
     """Split an oversized block while preserving table structure."""
 
-    if len(block) <= max_chars:
+    if len(block.text) <= max_chars:
         return (block,)
 
-    html_parts = _extract_html_table(block)
+    html_parts = _extract_html_table(block.text)
 
     if html_parts is not None:
         prefix, table = html_parts
-        return _split_large_html_table(
+        fragments = _split_large_html_table(
             table,
             max_chars,
             prefix=prefix,
         )
+    else:
+        markdown_parts = _extract_markdown_table(block.text)
 
-    markdown_parts = _extract_markdown_table(block)
+        if markdown_parts is not None:
+            prefix, table = markdown_parts
+            fragments = _split_large_markdown_table(
+                table,
+                max_chars,
+                prefix=prefix,
+            )
+        else:
+            fragments = _split_large_text(block.text, max_chars)
 
-    if markdown_parts is not None:
-        prefix, table = markdown_parts
-        return _split_large_markdown_table(
-            table,
-            max_chars,
-            prefix=prefix,
+    return tuple(
+        _LineagedBlock(
+            text=fragment,
+            source_element_ids=block.source_element_ids,
         )
-
-    return _split_large_text(block, max_chars)
+        for fragment in fragments
+    )
 
 
 def _split_large_markdown_table(
@@ -485,18 +542,18 @@ def _hard_wrap(
 
 
 def _pack_blocks(
-    blocks: tuple[str, ...],
+    blocks: tuple[_LineagedBlock, ...],
     *,
     target_chars: int,
     max_chars: int,
-) -> tuple[tuple[str, ...], ...]:
+) -> tuple[tuple[_LineagedBlock, ...], ...]:
     """Pack blocks into chunks while enforcing the hard maximum."""
 
-    packed: list[tuple[str, ...]] = []
-    current: list[str] = []
+    packed: list[tuple[_LineagedBlock, ...]] = []
+    current: list[_LineagedBlock] = []
 
     for block in blocks:
-        candidate = "\n\n".join([*current, block])
+        candidate = "\n\n".join(item.text for item in [*current, block])
 
         if current and len(candidate) > target_chars:
             packed.append(tuple(current))
@@ -504,7 +561,7 @@ def _pack_blocks(
         else:
             current.append(block)
 
-        current_text = "\n\n".join(current)
+        current_text = "\n\n".join(item.text for item in current)
 
         if len(current_text) > max_chars:
             raise DocumentChunkingError("Internal chunking error: a chunk exceeded max_chars.")
@@ -513,6 +570,16 @@ def _pack_blocks(
         packed.append(tuple(current))
 
     return tuple(packed)
+
+
+def _collect_source_element_ids(
+    blocks: tuple[_LineagedBlock, ...],
+) -> tuple[str, ...]:
+    """Collect source-element IDs in first-occurrence order."""
+
+    return tuple(
+        dict.fromkeys(element_id for block in blocks for element_id in block.source_element_ids)
+    )
 
 
 def _build_chunk_id(
@@ -527,6 +594,20 @@ def _build_chunk_id(
     payload = (f"{document_id}\0{page_number}\0{chunk_index}\0{text}").encode()
     digest = sha256(payload).hexdigest()
     return f"chunk:{digest[:24]}"
+
+
+def _build_source_element_id(
+    *,
+    document_id: str,
+    page_number: int,
+    element_index: int,
+    text: str,
+) -> str:
+    """Build a stable ID for one normalized source Markdown block."""
+
+    payload = (f"{document_id}\0{page_number}\0{element_index}\0{text}").encode()
+    digest = sha256(payload).hexdigest()
+    return f"element:{digest[:24]}"
 
 
 def _extract_html_table(

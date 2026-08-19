@@ -60,6 +60,7 @@ def test_chunks_preserve_document_and_page_metadata() -> None:
     assert chunks[0].filename == document.filename
     assert chunks[0].page_start == 1
     assert chunks[0].page_end == 1
+    assert chunks[0].source_element_ids
     assert chunks[0].text
     assert chunks[0].char_count == len(chunks[0].text)
 
@@ -126,6 +127,62 @@ def test_large_markdown_table_repeats_heading_and_complete_rows() -> None:
     assert chunk_rows == data_rows
 
 
+def test_split_table_fragments_preserve_source_element_lineage() -> None:
+    """Every derived table fragment should reference its original elements."""
+
+    rows = "\n".join(f"| {year} | {'1' * 40} |" for year in range(2000, 2010))
+    table = f"# Revenue Table\n\n| Year | Revenue |\n| --- | ---: |\n{rows}"
+    chunker = MarkdownChunker(
+        ChunkingConfig(
+            target_chars=120,
+            max_chars=180,
+        )
+    )
+
+    first = chunker.chunk(build_document(table))
+    second = chunker.chunk(build_document(table))
+
+    assert len(first) > 1
+    assert all(len(chunk.source_element_ids) == 2 for chunk in first)
+    assert all(chunk.source_element_ids == first[0].source_element_ids for chunk in first)
+    assert [chunk.source_element_ids for chunk in first] == [
+        chunk.source_element_ids for chunk in second
+    ]
+
+
+def test_source_element_ids_do_not_depend_on_chunk_limits() -> None:
+    """Changing packing limits must not change source-element identity."""
+
+    document = build_document(
+        "# Summary\n\n"
+        "Revenue increased substantially during the reporting period. "
+        "Operating expenses remained stable."
+    )
+    wide_chunks = MarkdownChunker(
+        ChunkingConfig(
+            target_chars=200,
+            max_chars=240,
+        )
+    ).chunk(document)
+    narrow_chunks = MarkdownChunker(
+        ChunkingConfig(
+            target_chars=50,
+            max_chars=70,
+        )
+    ).chunk(document)
+
+    wide_element_ids = {
+        element_id for chunk in wide_chunks for element_id in chunk.source_element_ids
+    }
+    narrow_element_ids = {
+        element_id for chunk in narrow_chunks for element_id in chunk.source_element_ids
+    }
+
+    assert len(wide_chunks) == 1
+    assert len(narrow_chunks) > 1
+    assert narrow_element_ids == wide_element_ids
+
+
 def test_large_html_table_splits_only_between_rows() -> None:
     """LlamaParse HTML tables should retain context and table headers."""
 
@@ -179,3 +236,6 @@ def test_jsonl_export_contains_one_record_per_chunk() -> None:
     assert len(records) == len(chunks)
     assert [record["chunk_id"] for record in records] == [chunk.chunk_id for chunk in chunks]
     assert [record["chunk_index"] for record in records] == list(range(len(chunks)))
+    assert [record["source_element_ids"] for record in records] == [
+        list(chunk.source_element_ids) for chunk in chunks
+    ]
