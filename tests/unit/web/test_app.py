@@ -90,6 +90,7 @@ def test_parse_and_chunk_pdf() -> None:
     assert "sha256:test" in response.text
     assert "Retrieval chunks" in response.text
     assert "Download chunks as JSONL" in response.text
+    assert "Tokens" in response.text
     assert "chunk:" in response.text
 
 

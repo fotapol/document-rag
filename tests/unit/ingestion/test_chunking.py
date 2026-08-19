@@ -2,15 +2,75 @@
 
 import json
 
+import pytest
+
 from document_rag.ingestion.chunking import (
     ChunkingConfig,
+    DocumentChunkingError,
+    HuggingFaceTokenCounter,
     MarkdownChunker,
+    RegexTokenCounter,
     chunks_to_jsonl,
 )
 from document_rag.ingestion.llamaparse import (
     ParsedDocument,
     ParsedPage,
 )
+
+
+class CharacterTokenCounter:
+    """Treat characters as tokens to isolate structure-aware test limits."""
+
+    def count(self, text: str) -> int:
+        """Return the exact character length."""
+
+        return len(text)
+
+
+class ZeroTokenCounter:
+    """Invalid counter used to verify defensive validation."""
+
+    def count(self, text: str) -> int:
+        """Incorrectly report zero for every input."""
+
+        del text
+        return 0
+
+
+class FakeHuggingFaceTokenizer:
+    """Minimal Hugging Face-compatible tokenizer test double."""
+
+    def __init__(self) -> None:
+        """Record how the adapter invokes tokenization."""
+
+        self.add_special_tokens: bool | None = None
+
+    def encode(
+        self,
+        text: str,
+        *,
+        add_special_tokens: bool,
+    ) -> list[int]:
+        """Return one synthetic ID per whitespace-delimited token."""
+
+        self.add_special_tokens = add_special_tokens
+        return list(range(len(text.split())))
+
+
+def build_character_chunker(
+    *,
+    target_tokens: int,
+    max_tokens: int,
+) -> MarkdownChunker:
+    """Build a chunker whose existing structure fixtures use exact lengths."""
+
+    return MarkdownChunker(
+        ChunkingConfig(
+            target_tokens=target_tokens,
+            max_tokens=max_tokens,
+        ),
+        token_counter=CharacterTokenCounter(),
+    )
 
 
 def build_document(markdown: str) -> ParsedDocument:
@@ -35,11 +95,9 @@ def test_repeated_chunking_produces_identical_ids() -> None:
     document = build_document(
         "# Revenue\n\nRevenue increased by 12%.\n\n# Expenses\n\nExpenses decreased by 3%."
     )
-    chunker = MarkdownChunker(
-        ChunkingConfig(
-            target_chars=50,
-            max_chars=100,
-        )
+    chunker = build_character_chunker(
+        target_tokens=50,
+        max_tokens=100,
     )
 
     first = chunker.chunk(document)
@@ -47,6 +105,72 @@ def test_repeated_chunking_produces_identical_ids() -> None:
 
     assert first == second
     assert [chunk.chunk_id for chunk in first] == [chunk.chunk_id for chunk in second]
+
+
+def test_fixed_token_chunking_enforces_configured_limit() -> None:
+    """The default counter should split prose at the configured token limit."""
+
+    chunks = MarkdownChunker(
+        ChunkingConfig(
+            target_tokens=4,
+            max_tokens=4,
+        )
+    ).chunk(build_document("Revenue grew rapidly. Expenses stayed flat."))
+
+    assert [chunk.text for chunk in chunks] == [
+        "Revenue grew rapidly.",
+        "Expenses stayed flat.",
+    ]
+    assert [chunk.token_count for chunk in chunks] == [4, 4]
+
+
+def test_hugging_face_counter_uses_model_tokens_without_special_tokens() -> None:
+    """The adapter should use the supplied model tokenizer exactly."""
+
+    tokenizer = FakeHuggingFaceTokenizer()
+    counter = HuggingFaceTokenCounter(tokenizer)
+
+    assert counter.count("revenue increased") == 2
+    assert tokenizer.add_special_tokens is False
+
+
+@pytest.mark.parametrize(
+    ("target_tokens", "max_tokens", "message"),
+    [
+        (0, 1, "target_tokens must be positive"),
+        (2, 1, "max_tokens must be greater than or equal to target_tokens"),
+    ],
+)
+def test_chunking_config_rejects_invalid_token_limits(
+    target_tokens: int,
+    max_tokens: int,
+    message: str,
+) -> None:
+    """Token limits should fail before document processing begins."""
+
+    with pytest.raises(ValueError, match=message):
+        ChunkingConfig(
+            target_tokens=target_tokens,
+            max_tokens=max_tokens,
+        )
+
+
+def test_chunker_rejects_counter_that_cannot_measure_text() -> None:
+    """A broken injected counter must not silently bypass token limits."""
+
+    chunker = MarkdownChunker(
+        ChunkingConfig(
+            target_tokens=1,
+            max_tokens=1,
+        ),
+        token_counter=ZeroTokenCounter(),
+    )
+
+    with pytest.raises(
+        DocumentChunkingError,
+        match="token counter returned zero",
+    ):
+        chunker.chunk(build_document("Revenue"))
 
 
 def test_chunks_preserve_document_and_page_metadata() -> None:
@@ -63,17 +187,16 @@ def test_chunks_preserve_document_and_page_metadata() -> None:
     assert chunks[0].source_element_ids
     assert chunks[0].text
     assert chunks[0].char_count == len(chunks[0].text)
+    assert chunks[0].token_count == RegexTokenCounter().count(chunks[0].text)
 
 
 def test_small_markdown_table_remains_in_one_chunk() -> None:
     """A pipe table under the hard limit should remain intact."""
 
     table = "| Year | Revenue |\n| --- | ---: |\n| 2024 | 100 |\n| 2025 | 120 |"
-    chunks = MarkdownChunker(
-        ChunkingConfig(
-            target_chars=500,
-            max_chars=600,
-        )
+    chunks = build_character_chunker(
+        target_tokens=500,
+        max_tokens=600,
     ).chunk(build_document(table))
 
     assert len(chunks) == 1
@@ -85,11 +208,9 @@ def test_large_markdown_table_repeats_header() -> None:
 
     rows = "\n".join(f"| {year} | {'1' * 40} |" for year in range(2000, 2010))
     table = f"| Year | Revenue |\n| --- | ---: |\n{rows}"
-    chunks = MarkdownChunker(
-        ChunkingConfig(
-            target_chars=120,
-            max_chars=160,
-        )
+    chunks = build_character_chunker(
+        target_tokens=120,
+        max_tokens=160,
     ).chunk(build_document(table))
 
     assert len(chunks) > 1
@@ -104,11 +225,9 @@ def test_large_markdown_table_repeats_heading_and_complete_rows() -> None:
 
     data_rows = [f"| {year} | {'1' * 40} |" for year in range(2000, 2010)]
     table = "# Revenue Table\n\n| Year | Revenue |\n| --- | ---: |\n" + "\n".join(data_rows)
-    chunks = MarkdownChunker(
-        ChunkingConfig(
-            target_chars=120,
-            max_chars=180,
-        )
+    chunks = build_character_chunker(
+        target_tokens=120,
+        max_tokens=180,
     ).chunk(build_document(table))
 
     assert len(chunks) > 1
@@ -132,11 +251,9 @@ def test_split_table_fragments_preserve_source_element_lineage() -> None:
 
     rows = "\n".join(f"| {year} | {'1' * 40} |" for year in range(2000, 2010))
     table = f"# Revenue Table\n\n| Year | Revenue |\n| --- | ---: |\n{rows}"
-    chunker = MarkdownChunker(
-        ChunkingConfig(
-            target_chars=120,
-            max_chars=180,
-        )
+    chunker = build_character_chunker(
+        target_tokens=120,
+        max_tokens=180,
     )
 
     first = chunker.chunk(build_document(table))
@@ -158,17 +275,13 @@ def test_source_element_ids_do_not_depend_on_chunk_limits() -> None:
         "Revenue increased substantially during the reporting period. "
         "Operating expenses remained stable."
     )
-    wide_chunks = MarkdownChunker(
-        ChunkingConfig(
-            target_chars=200,
-            max_chars=240,
-        )
+    wide_chunks = build_character_chunker(
+        target_tokens=200,
+        max_tokens=240,
     ).chunk(document)
-    narrow_chunks = MarkdownChunker(
-        ChunkingConfig(
-            target_chars=50,
-            max_chars=70,
-        )
+    narrow_chunks = build_character_chunker(
+        target_tokens=50,
+        max_tokens=70,
     ).chunk(document)
 
     wide_element_ids = {
@@ -200,11 +313,9 @@ def test_large_html_table_splits_only_between_rows() -> None:
         "</tbody>\n"
         "</table>"
     )
-    chunks = MarkdownChunker(
-        ChunkingConfig(
-            target_chars=320,
-            max_chars=420,
-        )
+    chunks = build_character_chunker(
+        target_tokens=320,
+        max_tokens=420,
     ).chunk(build_document(table))
 
     assert len(chunks) > 1
@@ -223,11 +334,9 @@ def test_jsonl_export_contains_one_record_per_chunk() -> None:
     """JSONL export should preserve chunk order and identifiers."""
 
     document = build_document("# First\n\nOne.\n\n# Second\n\nTwo.")
-    chunks = MarkdownChunker(
-        ChunkingConfig(
-            target_chars=20,
-            max_chars=50,
-        )
+    chunks = build_character_chunker(
+        target_tokens=20,
+        max_tokens=50,
     ).chunk(document)
 
     lines = chunks_to_jsonl(chunks).splitlines()
@@ -239,3 +348,4 @@ def test_jsonl_export_contains_one_record_per_chunk() -> None:
     assert [record["source_element_ids"] for record in records] == [
         list(chunk.source_element_ids) for chunk in chunks
     ]
+    assert [record["token_count"] for record in records] == [chunk.token_count for chunk in chunks]

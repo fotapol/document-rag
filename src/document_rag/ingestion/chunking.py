@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from hashlib import sha256
+from typing import Protocol
 
 from document_rag.ingestion.llamaparse import ParsedDocument
 
@@ -15,6 +16,7 @@ _TABLE_SEPARATOR_PATTERN = re.compile(
     r"(?:\|\s*:?-{3,}:?\s*)+\|?\s*$"
 )
 _SENTENCE_BOUNDARY_PATTERN = re.compile(r"(?<=[.!?])\s+")
+_TOKEN_PATTERN = re.compile(r"\w+|[^\w\s]", re.UNICODE)
 _HTML_TABLE_START_PATTERN = re.compile(r"^\s*<table(?:\s|>)", re.IGNORECASE)
 _HTML_TABLE_OPEN_PATTERN = re.compile(
     r"<table\b[^>]*>",
@@ -44,21 +46,67 @@ class DocumentChunkingError(RuntimeError):
     """Raised when a parsed document cannot produce usable chunks."""
 
 
+class TokenCounter(Protocol):
+    """Count retrieval-model tokens without coupling to one tokenizer library."""
+
+    def count(self, text: str) -> int:
+        """Return the number of tokens in text."""
+
+
+class HuggingFaceTokenizer(Protocol):
+    """Minimal tokenizer API needed by the Hugging Face counter adapter."""
+
+    def encode(
+        self,
+        text: str,
+        *,
+        add_special_tokens: bool,
+    ) -> Sequence[int]:
+        """Encode text into model token IDs."""
+
+
+@dataclass(frozen=True, slots=True)
+class HuggingFaceTokenCounter:
+    """Count tokens with an injected Hugging Face-compatible tokenizer."""
+
+    tokenizer: HuggingFaceTokenizer
+
+    def count(self, text: str) -> int:
+        """Count content tokens without model-level special tokens."""
+
+        return len(
+            self.tokenizer.encode(
+                text,
+                add_special_tokens=False,
+            )
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RegexTokenCounter:
+    """Deterministic offline token counter for default ingestion."""
+
+    def count(self, text: str) -> int:
+        """Count Unicode word runs and individual punctuation symbols."""
+
+        return len(_TOKEN_PATTERN.findall(text))
+
+
 @dataclass(frozen=True, slots=True)
 class ChunkingConfig:
-    """Character-based limits for deterministic Markdown chunking."""
+    """Token-based limits for deterministic Markdown chunking."""
 
-    target_chars: int = 1_200
-    max_chars: int = 1_800
+    target_tokens: int = 300
+    max_tokens: int = 450
 
     def __post_init__(self) -> None:
         """Reject invalid limits before chunking begins."""
 
-        if self.target_chars <= 0:
-            raise ValueError("target_chars must be positive.")
+        if self.target_tokens <= 0:
+            raise ValueError("target_tokens must be positive.")
 
-        if self.max_chars < self.target_chars:
-            raise ValueError("max_chars must be greater than or equal to target_chars.")
+        if self.max_tokens < self.target_tokens:
+            raise ValueError("max_tokens must be greater than or equal to target_tokens.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +123,7 @@ class DocumentChunk:
     source_element_ids: tuple[str, ...]
     text: str
     char_count: int
+    token_count: int
     block_count: int
 
     def to_record(self) -> dict[str, object]:
@@ -91,6 +140,7 @@ class DocumentChunk:
             "source_element_ids": list(self.source_element_ids),
             "text": self.text,
             "char_count": self.char_count,
+            "token_count": self.token_count,
             "block_count": self.block_count,
         }
 
@@ -109,10 +159,13 @@ class MarkdownChunker:
     def __init__(
         self,
         config: ChunkingConfig | None = None,
+        *,
+        token_counter: TokenCounter | None = None,
     ) -> None:
         """Create a chunker with explicit or default limits."""
 
         self._config = config or ChunkingConfig()
+        self._token_counter = token_counter or RegexTokenCounter()
 
     def chunk(
         self,
@@ -140,14 +193,16 @@ class MarkdownChunker:
                 for block in blocks
                 for fragment in _split_oversized_block(
                     block,
-                    self._config.max_chars,
+                    self._config.max_tokens,
+                    token_counter=self._token_counter,
                 )
             )
 
             for chunk_blocks in _pack_blocks(
                 blocks,
-                target_chars=self._config.target_chars,
-                max_chars=self._config.max_chars,
+                target_tokens=self._config.target_tokens,
+                max_tokens=self._config.max_tokens,
+                token_counter=self._token_counter,
             ):
                 text = "\n\n".join(block.text for block in chunk_blocks).strip()
 
@@ -173,6 +228,7 @@ class MarkdownChunker:
                         source_element_ids=_collect_source_element_ids(chunk_blocks),
                         text=text,
                         char_count=len(text),
+                        token_count=_count_tokens(text, self._token_counter),
                         block_count=len(chunk_blocks),
                     )
                 )
@@ -322,11 +378,13 @@ def _attach_headings(
 
 def _split_oversized_block(
     block: _LineagedBlock,
-    max_chars: int,
+    max_tokens: int,
+    *,
+    token_counter: TokenCounter,
 ) -> tuple[_LineagedBlock, ...]:
     """Split an oversized block while preserving table structure."""
 
-    if len(block.text) <= max_chars:
+    if _count_tokens(block.text, token_counter) <= max_tokens:
         return (block,)
 
     html_parts = _extract_html_table(block.text)
@@ -335,8 +393,9 @@ def _split_oversized_block(
         prefix, table = html_parts
         fragments = _split_large_html_table(
             table,
-            max_chars,
+            max_tokens,
             prefix=prefix,
+            token_counter=token_counter,
         )
     else:
         markdown_parts = _extract_markdown_table(block.text)
@@ -345,11 +404,16 @@ def _split_oversized_block(
             prefix, table = markdown_parts
             fragments = _split_large_markdown_table(
                 table,
-                max_chars,
+                max_tokens,
                 prefix=prefix,
+                token_counter=token_counter,
             )
         else:
-            fragments = _split_large_text(block.text, max_chars)
+            fragments = _split_large_text(
+                block.text,
+                max_tokens,
+                token_counter=token_counter,
+            )
 
     return tuple(
         _LineagedBlock(
@@ -362,16 +426,21 @@ def _split_oversized_block(
 
 def _split_large_markdown_table(
     table: str,
-    max_chars: int,
+    max_tokens: int,
     *,
     prefix: str,
+    token_counter: TokenCounter,
 ) -> tuple[str, ...]:
     """Split a large pipe table by rows and repeat its header."""
 
     lines = table.splitlines()
 
     if len(lines) < 3 or not _is_table_separator(lines[1]):
-        return _split_large_text(table, max_chars)
+        return _split_large_text(
+            table,
+            max_tokens,
+            token_counter=token_counter,
+        )
 
     header = lines[:2]
     rows = lines[2:]
@@ -391,7 +460,7 @@ def _split_large_markdown_table(
     for row in rows:
         candidate = render([*current_rows, row])
 
-        if current_rows and len(candidate) > max_chars:
+        if current_rows and _count_tokens(candidate, token_counter) > max_tokens:
             fragments.append(render(current_rows))
             current_rows = [row]
         else:
@@ -399,8 +468,8 @@ def _split_large_markdown_table(
 
         single_row_candidate = render(current_rows)
 
-        if len(single_row_candidate) > max_chars:
-            raise DocumentChunkingError("A Markdown table row exceeds max_chars.")
+        if _count_tokens(single_row_candidate, token_counter) > max_tokens:
+            raise DocumentChunkingError("A Markdown table row exceeds max_tokens.")
 
     if current_rows:
         fragments.append(render(current_rows))
@@ -410,9 +479,10 @@ def _split_large_markdown_table(
 
 def _split_large_html_table(
     table: str,
-    max_chars: int,
+    max_tokens: int,
     *,
     prefix: str,
+    token_counter: TokenCounter,
 ) -> tuple[str, ...]:
     """Split an HTML table by complete rows and repeat its header."""
 
@@ -460,14 +530,14 @@ def _split_large_html_table(
     for row in rows:
         candidate = render([*current_rows, row])
 
-        if current_rows and len(candidate) > max_chars:
+        if current_rows and _count_tokens(candidate, token_counter) > max_tokens:
             fragments.append(render(current_rows))
             current_rows = [row]
         else:
             current_rows.append(row)
 
-        if len(render(current_rows)) > max_chars:
-            raise DocumentChunkingError("An HTML table row exceeds max_chars.")
+        if _count_tokens(render(current_rows), token_counter) > max_tokens:
+            raise DocumentChunkingError("An HTML table row exceeds max_tokens.")
 
     if current_rows:
         fragments.append(render(current_rows))
@@ -477,7 +547,9 @@ def _split_large_html_table(
 
 def _split_large_text(
     text: str,
-    max_chars: int,
+    max_tokens: int,
+    *,
+    token_counter: TokenCounter,
 ) -> tuple[str, ...]:
     """Split long prose by sentences and then by safe whitespace."""
 
@@ -486,7 +558,11 @@ def _split_large_text(
     ]
 
     if len(sentences) <= 1:
-        return _hard_wrap(text, max_chars)
+        return _hard_wrap(
+            text,
+            max_tokens,
+            token_counter=token_counter,
+        )
 
     fragments: list[str] = []
     current = ""
@@ -494,7 +570,7 @@ def _split_large_text(
     for sentence in sentences:
         candidate = sentence if not current else f"{current} {sentence}"
 
-        if len(candidate) <= max_chars:
+        if _count_tokens(candidate, token_counter) <= max_tokens:
             current = candidate
             continue
 
@@ -502,10 +578,16 @@ def _split_large_text(
             fragments.append(current)
             current = ""
 
-        if len(sentence) <= max_chars:
+        if _count_tokens(sentence, token_counter) <= max_tokens:
             current = sentence
         else:
-            fragments.extend(_hard_wrap(sentence, max_chars))
+            fragments.extend(
+                _hard_wrap(
+                    sentence,
+                    max_tokens,
+                    token_counter=token_counter,
+                )
+            )
 
     if current:
         fragments.append(current)
@@ -515,18 +597,25 @@ def _split_large_text(
 
 def _hard_wrap(
     text: str,
-    max_chars: int,
+    max_tokens: int,
+    *,
+    token_counter: TokenCounter,
 ) -> tuple[str, ...]:
-    """Split text at nearby whitespace without losing characters."""
+    """Split text at nearby whitespace while enforcing a token maximum."""
 
     remaining = text.strip()
     fragments: list[str] = []
 
-    while len(remaining) > max_chars:
-        split_at = remaining.rfind(" ", 0, max_chars + 1)
+    while _count_tokens(remaining, token_counter) > max_tokens:
+        split_at = _largest_prefix_within_token_limit(
+            remaining,
+            max_tokens,
+            token_counter=token_counter,
+        )
+        whitespace_split = _last_whitespace_before(remaining, split_at)
 
-        if split_at <= 0:
-            split_at = max_chars
+        if whitespace_split > 0:
+            split_at = whitespace_split
 
         fragment = remaining[:split_at].strip()
 
@@ -541,11 +630,67 @@ def _hard_wrap(
     return tuple(fragments)
 
 
+def _largest_prefix_within_token_limit(
+    text: str,
+    max_tokens: int,
+    *,
+    token_counter: TokenCounter,
+) -> int:
+    """Find the longest character prefix accepted by the token counter."""
+
+    lower = 1
+    upper = len(text)
+    best = 0
+
+    while lower <= upper:
+        midpoint = (lower + upper) // 2
+        candidate = text[:midpoint].rstrip()
+
+        if candidate and _count_tokens(candidate, token_counter) <= max_tokens:
+            best = midpoint
+            lower = midpoint + 1
+        else:
+            upper = midpoint - 1
+
+    if best == 0:
+        raise DocumentChunkingError("The token counter cannot fit any text within max_tokens.")
+
+    return best
+
+
+def _last_whitespace_before(text: str, end: int) -> int:
+    """Return the last whitespace position before a candidate split."""
+
+    for index in range(min(end, len(text) - 1), 0, -1):
+        if text[index].isspace():
+            return index
+
+    return -1
+
+
+def _count_tokens(
+    text: str,
+    token_counter: TokenCounter,
+) -> int:
+    """Count tokens and reject counters that cannot measure non-empty text."""
+
+    token_count = token_counter.count(text)
+
+    if token_count < 0:
+        raise DocumentChunkingError("The token counter returned a negative count.")
+
+    if text.strip() and token_count == 0:
+        raise DocumentChunkingError("The token counter returned zero for non-empty text.")
+
+    return token_count
+
+
 def _pack_blocks(
     blocks: tuple[_LineagedBlock, ...],
     *,
-    target_chars: int,
-    max_chars: int,
+    target_tokens: int,
+    max_tokens: int,
+    token_counter: TokenCounter,
 ) -> tuple[tuple[_LineagedBlock, ...], ...]:
     """Pack blocks into chunks while enforcing the hard maximum."""
 
@@ -555,7 +700,7 @@ def _pack_blocks(
     for block in blocks:
         candidate = "\n\n".join(item.text for item in [*current, block])
 
-        if current and len(candidate) > target_chars:
+        if current and _count_tokens(candidate, token_counter) > target_tokens:
             packed.append(tuple(current))
             current = [block]
         else:
@@ -563,8 +708,8 @@ def _pack_blocks(
 
         current_text = "\n\n".join(item.text for item in current)
 
-        if len(current_text) > max_chars:
-            raise DocumentChunkingError("Internal chunking error: a chunk exceeded max_chars.")
+        if _count_tokens(current_text, token_counter) > max_tokens:
+            raise DocumentChunkingError("Internal chunking error: a chunk exceeded max_tokens.")
 
     if current:
         packed.append(tuple(current))
