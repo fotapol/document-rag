@@ -98,6 +98,34 @@ def test_large_markdown_table_repeats_header() -> None:
         assert chunk.char_count <= 160
 
 
+def test_large_markdown_table_repeats_heading_and_complete_rows() -> None:
+    """A section heading must not make an oversized pipe table lose structure."""
+
+    data_rows = [f"| {year} | {'1' * 40} |" for year in range(2000, 2010)]
+    table = "# Revenue Table\n\n| Year | Revenue |\n| --- | ---: |\n" + "\n".join(data_rows)
+    chunks = MarkdownChunker(
+        ChunkingConfig(
+            target_chars=120,
+            max_chars=180,
+        )
+    ).chunk(build_document(table))
+
+    assert len(chunks) > 1
+
+    chunk_rows: list[str] = []
+
+    for chunk in chunks:
+        assert chunk.char_count <= 180
+        assert chunk.text.startswith("# Revenue Table\n\n| Year | Revenue |\n| --- | ---: |")
+
+        rows = [line for line in chunk.text.splitlines() if line.startswith("| 20")]
+        assert rows
+        assert all(row.endswith(" |") for row in rows)
+        chunk_rows.extend(rows)
+
+    assert chunk_rows == data_rows
+
+
 def test_large_html_table_splits_only_between_rows() -> None:
     """LlamaParse HTML tables should retain context and table headers."""
 

@@ -290,8 +290,15 @@ def _split_oversized_block(
             prefix=prefix,
         )
 
-    if _looks_like_markdown_table(block):
-        return _split_large_markdown_table(block, max_chars)
+    markdown_parts = _extract_markdown_table(block)
+
+    if markdown_parts is not None:
+        prefix, table = markdown_parts
+        return _split_large_markdown_table(
+            table,
+            max_chars,
+            prefix=prefix,
+        )
 
     return _split_large_text(block, max_chars)
 
@@ -299,6 +306,8 @@ def _split_oversized_block(
 def _split_large_markdown_table(
     table: str,
     max_chars: int,
+    *,
+    prefix: str,
 ) -> tuple[str, ...]:
     """Split a large pipe table by rows and repeat its header."""
 
@@ -312,22 +321,32 @@ def _split_large_markdown_table(
     fragments: list[str] = []
     current_rows: list[str] = []
 
+    def render(fragment_rows: list[str]) -> str:
+        """Render one complete table fragment with repeated context."""
+
+        rendered_table = "\n".join([*header, *fragment_rows])
+
+        if prefix:
+            return f"{prefix}\n\n{rendered_table}"
+
+        return rendered_table
+
     for row in rows:
-        candidate = "\n".join(header + current_rows + [row])
+        candidate = render([*current_rows, row])
 
         if current_rows and len(candidate) > max_chars:
-            fragments.append("\n".join(header + current_rows))
+            fragments.append(render(current_rows))
             current_rows = [row]
         else:
             current_rows.append(row)
 
-        single_row_candidate = "\n".join(header + current_rows)
+        single_row_candidate = render(current_rows)
 
         if len(single_row_candidate) > max_chars:
             raise DocumentChunkingError("A Markdown table row exceeds max_chars.")
 
     if current_rows:
-        fragments.append("\n".join(header + current_rows))
+        fragments.append(render(current_rows))
 
     return tuple(fragment for fragment in fragments if fragment.strip())
 
@@ -532,6 +551,24 @@ def _extract_html_table(
     return prefix, table
 
 
+def _extract_markdown_table(
+    block: str,
+) -> tuple[str, str] | None:
+    """Extract a pipe table and any preceding section context."""
+
+    lines = block.splitlines()
+
+    for index in range(len(lines) - 1):
+        if "|" not in lines[index] or not _is_table_separator(lines[index + 1]):
+            continue
+
+        prefix = "\n".join(lines[:index]).strip()
+        table = "\n".join(lines[index:]).strip()
+        return prefix, table
+
+    return None
+
+
 def _is_heading(block: str) -> bool:
     """Return whether a block is one standalone ATX heading."""
 
@@ -635,10 +672,3 @@ def _consume_markdown_table(
         index += 1
 
     return "\n".join(collected).strip(), index
-
-
-def _looks_like_markdown_table(block: str) -> bool:
-    """Return whether a block has Markdown pipe-table structure."""
-
-    lines = block.splitlines()
-    return len(lines) >= 2 and "|" in lines[0] and _is_table_separator(lines[1])
