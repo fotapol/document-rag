@@ -51,10 +51,11 @@ def parse_tier(value: str) -> ParseTier:
 
 @dataclass(frozen=True, slots=True)
 class ParsedPage:
-    """Markdown extracted from one source document page."""
+    """Page Markdown and optional IDs aligned with its structural blocks."""
 
     page_number: int
     markdown: str
+    source_element_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
