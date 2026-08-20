@@ -27,6 +27,7 @@ from document_rag.datasets.docfinqa.writer import WrittenDocFinQASplit
 from document_rag.datasets.finqa import prepare_finqa_dataset
 from document_rag.datasets.finqa.writer import WrittenFinQASplit
 from document_rag.datasets.models import DatasetName, DatasetSplit
+from document_rag.retrieval.benchmark import run_bm25_benchmark
 from document_rag.training import export_financial_qa_training_data
 
 _DOCFINQA_PROGRESS_INTERVAL_SECONDS = 5.0
@@ -46,6 +47,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if arguments.command == "training" and arguments.training_command == "export":
         return _run_training_export(arguments)
+
+    if arguments.command == "retrieval" and arguments.retrieval_command == "bm25":
+        return _run_retrieval_bm25(arguments)
 
     parser.error("A command is required")
     return 2
@@ -192,6 +196,49 @@ def _build_parser() -> argparse.ArgumentParser:
             "Split to export. May be specified more than once. "
             "All splits are exported when omitted."
         ),
+    )
+
+    retrieval_parser = commands.add_parser(
+        "retrieval",
+        help="Run retrieval benchmarks.",
+    )
+    retrieval_commands = retrieval_parser.add_subparsers(dest="retrieval_command")
+
+    bm25_parser = retrieval_commands.add_parser(
+        "bm25",
+        help="Evaluate BM25 against normalized source lineage.",
+    )
+    bm25_parser.add_argument(
+        "--finqa",
+        dest="finqa_directory",
+        type=Path,
+        help="Directory containing prepared FinQA artifacts.",
+    )
+    bm25_parser.add_argument(
+        "--docfinqa",
+        dest="docfinqa_directory",
+        type=Path,
+        help="Directory containing prepared DocFinQA artifacts.",
+    )
+    bm25_parser.add_argument(
+        "--output",
+        dest="output_directory",
+        type=Path,
+        required=True,
+        help="Directory for retrieval predictions and metrics.",
+    )
+    bm25_parser.add_argument(
+        "--split",
+        choices=tuple(split.value for split in DatasetSplit),
+        default=DatasetSplit.TEST.value,
+        help=f"Prepared split to evaluate. Default: {DatasetSplit.TEST.value}.",
+    )
+    bm25_parser.add_argument(
+        "--top-k",
+        dest="top_k_values",
+        action="append",
+        type=int,
+        help=("Rank cutoff to evaluate. May be specified more than once. Defaults to 1, 3, and 5."),
     )
 
     return parser
@@ -476,6 +523,62 @@ def _run_training_export(arguments: argparse.Namespace) -> int:
         print(f"  {artifact.split.value}: {artifact.record_count} examples -> {artifact.path}")
 
     print(f"Manifest: {result.manifest_path}")
+    return 0
+
+
+def _run_retrieval_bm25(arguments: argparse.Namespace) -> int:
+    finqa_directory = cast(Path | None, arguments.finqa_directory)
+    docfinqa_directory = cast(Path | None, arguments.docfinqa_directory)
+    output_directory = cast(Path, arguments.output_directory)
+    split = DatasetSplit(cast(str, arguments.split))
+    top_k_values = cast(list[int] | None, arguments.top_k_values)
+    dataset_directories: dict[DatasetName, Path] = {}
+
+    if finqa_directory is not None:
+        dataset_directories[DatasetName.FINQA] = finqa_directory
+
+    if docfinqa_directory is not None:
+        dataset_directories[DatasetName.DOCFINQA] = docfinqa_directory
+
+    if not dataset_directories:
+        print(
+            "error: retrieval bm25 requires --finqa and/or --docfinqa",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        if top_k_values is None:
+            result = run_bm25_benchmark(
+                dataset_directories=dataset_directories,
+                output_directory=output_directory,
+                split=split,
+            )
+        else:
+            result = run_bm25_benchmark(
+                dataset_directories=dataset_directories,
+                output_directory=output_directory,
+                split=split,
+                k_values=tuple(top_k_values),
+            )
+    except (OSError, ValueError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+
+    print("Completed BM25 retrieval benchmark:")
+    print(f"  {result.metrics.query_count} queries")
+    print(f"  {result.document_count} documents")
+    print(f"  {result.indexed_chunk_count} indexed chunks")
+
+    for k, value in result.metrics.hit_rate_at_k:
+        print(f"  Hit Rate@{k}: {value:.6f}")
+
+    for k, value in result.metrics.recall_at_k:
+        print(f"  Recall@{k}: {value:.6f}")
+
+    print(f"  MRR: {result.metrics.mrr:.6f}")
+    print(f"Predictions: {result.predictions_path}")
+    print(f"Metrics: {result.metrics_path}")
     return 0
 
 

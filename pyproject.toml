@@ -9,6 +9,7 @@ dependencies = [
     "ijson>=3.5.1",
     "llama-cloud>=2.8",
     "pydantic>=2.13.4,<3",
+    "rank-bm25>=0.2.2",
 ]
 
 [project.scripts]
