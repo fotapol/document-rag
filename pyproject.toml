@@ -8,8 +8,10 @@ dependencies = [
     "fastapi[standard]>=0.141.1",
     "ijson>=3.5.1",
     "llama-cloud>=2.8",
+    "numpy>=2.5.2",
     "pydantic>=2.13.4,<3",
     "rank-bm25>=0.2.2",
+    "sentence-transformers>=6.0.0",
 ]
 
 [project.scripts]
