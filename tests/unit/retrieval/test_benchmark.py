@@ -1,8 +1,10 @@
 """Tests for normalized-data BM25 benchmark artifacts."""
 
 import json
+from collections.abc import Sequence
 from pathlib import Path
 
+import numpy as np
 from pydantic import BaseModel
 
 from document_rag.cli import main
@@ -21,6 +23,50 @@ from document_rag.domain.documents import (
 )
 from document_rag.domain.questions import Question
 from document_rag.retrieval.benchmark import run_bm25_benchmark
+from document_rag.retrieval.dense import FloatMatrix
+from document_rag.retrieval.dense_benchmark import run_dense_benchmark
+
+
+class FakeBenchmarkEmbedder:
+    """Rank the synthetic table semantically without model access."""
+
+    @property
+    def model_id(self) -> str:
+        return "fake/dense-model"
+
+    @property
+    def model_revision(self) -> str:
+        return "fake-revision"
+
+    @property
+    def dimension(self) -> int:
+        return 2
+
+    @property
+    def device(self) -> str:
+        return "cpu"
+
+    def embed_documents(
+        self,
+        texts: Sequence[str],
+        *,
+        batch_size: int,
+    ) -> FloatMatrix:
+        assert batch_size > 0
+        return np.asarray(
+            [(0.0, 1.0) if "Operating income" in text else (1.0, 0.0) for text in texts],
+            dtype=np.float32,
+        )
+
+    def embed_queries(
+        self,
+        texts: Sequence[str],
+        *,
+        batch_size: int,
+    ) -> FloatMatrix:
+        assert texts
+        assert batch_size > 0
+        return np.asarray([(0.0, 1.0) for _ in texts], dtype=np.float32)
 
 
 def write_jsonl(path: Path, records: tuple[BaseModel, ...]) -> None:
@@ -175,3 +221,59 @@ def test_cli_command_runs_complete_benchmark(tmp_path: Path) -> None:
     assert exit_code == 0
     assert (output_root / "retrieval_predictions.jsonl").is_file()
     assert (output_root / "retrieval_metrics.json").is_file()
+
+
+def test_dense_benchmark_reuses_frozen_corpus_and_writes_comparison(
+    tmp_path: Path,
+) -> None:
+    """Dense output should reuse BM25 inputs, metrics, and serialization."""
+
+    dataset_root = tmp_path / "finqa"
+    build_normalized_finqa(dataset_root)
+    bm25 = run_bm25_benchmark(
+        dataset_directories={DatasetName.FINQA: dataset_root},
+        output_directory=tmp_path / "bm25",
+    )
+
+    first = run_dense_benchmark(
+        dataset_directories={DatasetName.FINQA: dataset_root},
+        output_directory=tmp_path / "dense-first",
+        bm25_metrics_path=bm25.metrics_path,
+        embedder=FakeBenchmarkEmbedder(),
+        batch_size=2,
+    )
+    second = run_dense_benchmark(
+        dataset_directories={DatasetName.FINQA: dataset_root},
+        output_directory=tmp_path / "dense-second",
+        bm25_metrics_path=bm25.metrics_path,
+        embedder=FakeBenchmarkEmbedder(),
+        batch_size=2,
+    )
+
+    assert first.predictions_path.read_bytes() == second.predictions_path.read_bytes()
+    assert first.metrics_path.read_bytes() == second.metrics_path.read_bytes()
+    assert first.comparison_path.read_bytes() == second.comparison_path.read_bytes()
+    assert first.indexed_chunk_count == bm25.indexed_chunk_count == 2
+    assert first.metrics.hit_rate_at_k == bm25.metrics.hit_rate_at_k
+    assert first.metrics.recall_at_k == bm25.metrics.recall_at_k
+    assert first.metrics.mrr == bm25.metrics.mrr
+
+    dense_metrics = json.loads(first.metrics_path.read_text(encoding="utf-8"))
+    assert dense_metrics["benchmark_config"]["retriever_type"] == "dense_exact"
+    assert dense_metrics["benchmark_config"]["embedding_model"] == ("fake/dense-model")
+    assert dense_metrics["benchmark_config"]["embedding_dimension"] == 2
+    assert dense_metrics["dataset_counts"] == {
+        "finqa": {
+            "document_count": 1,
+            "indexed_chunk_count": 2,
+            "query_count": 1,
+        }
+    }
+
+    comparison = json.loads(first.comparison_path.read_text(encoding="utf-8"))
+    assert comparison["delta_definition"] == "dense_minus_bm25"
+    assert comparison["results"]["combined"]["absolute_delta"] == {
+        "hit_rate_at_k": {"1": 0.0, "3": 0.0, "5": 0.0},
+        "mrr": 0.0,
+        "recall_at_k": {"1": 0.0, "3": 0.0, "5": 0.0},
+    }

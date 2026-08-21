@@ -28,6 +28,13 @@ from document_rag.datasets.finqa import prepare_finqa_dataset
 from document_rag.datasets.finqa.writer import WrittenFinQASplit
 from document_rag.datasets.models import DatasetName, DatasetSplit
 from document_rag.retrieval.benchmark import run_bm25_benchmark
+from document_rag.retrieval.dense_benchmark import run_dense_benchmark
+from document_rag.retrieval.embeddings import (
+    DEFAULT_EMBEDDING_MODEL,
+    DEFAULT_EMBEDDING_MODEL_REVISION,
+    SentenceTransformerEmbedder,
+)
+from document_rag.retrieval.evaluation import DEFAULT_K_VALUES
 from document_rag.training import export_financial_qa_training_data
 
 _DOCFINQA_PROGRESS_INTERVAL_SECONDS = 5.0
@@ -50,6 +57,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if arguments.command == "retrieval" and arguments.retrieval_command == "bm25":
         return _run_retrieval_bm25(arguments)
+
+    if arguments.command == "retrieval" and arguments.retrieval_command == "dense":
+        return _run_retrieval_dense(arguments)
 
     parser.error("A command is required")
     return 2
@@ -234,6 +244,77 @@ def _build_parser() -> argparse.ArgumentParser:
         help=f"Prepared split to evaluate. Default: {DatasetSplit.TEST.value}.",
     )
     bm25_parser.add_argument(
+        "--top-k",
+        dest="top_k_values",
+        action="append",
+        type=int,
+        help=("Rank cutoff to evaluate. May be specified more than once. Defaults to 1, 3, and 5."),
+    )
+
+    dense_parser = retrieval_commands.add_parser(
+        "dense",
+        help="Evaluate exact dense retrieval against the frozen BM25 corpus.",
+    )
+    dense_parser.add_argument(
+        "--finqa",
+        dest="finqa_directory",
+        type=Path,
+        help="Directory containing the same prepared FinQA artifacts as BM25.",
+    )
+    dense_parser.add_argument(
+        "--docfinqa",
+        dest="docfinqa_directory",
+        type=Path,
+        help="Directory containing the same prepared DocFinQA artifacts as BM25.",
+    )
+    dense_parser.add_argument(
+        "--bm25-metrics",
+        type=Path,
+        required=True,
+        help="Frozen BM25 retrieval_metrics.json used for comparison.",
+    )
+    dense_parser.add_argument(
+        "--output",
+        dest="output_directory",
+        type=Path,
+        required=True,
+        help="Directory for dense predictions, metrics, and comparison artifacts.",
+    )
+    dense_parser.add_argument(
+        "--embedding-model",
+        default=DEFAULT_EMBEDDING_MODEL,
+        help=f"Sentence Transformers model ID. Default: {DEFAULT_EMBEDDING_MODEL}.",
+    )
+    dense_parser.add_argument(
+        "--model-revision",
+        default=DEFAULT_EMBEDDING_MODEL_REVISION,
+        help=(
+            f"Immutable Hugging Face model revision. Default: {DEFAULT_EMBEDDING_MODEL_REVISION}."
+        ),
+    )
+    dense_parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=32,
+        help="Embedding inference batch size. Default: 32.",
+    )
+    dense_parser.add_argument(
+        "--device",
+        default="auto",
+        help="Sentence Transformers device, for example auto, cpu, or cuda. Default: auto.",
+    )
+    dense_parser.add_argument(
+        "--cache-directory",
+        type=Path,
+        help="Optional embedding cache directory. Defaults inside the output directory.",
+    )
+    dense_parser.add_argument(
+        "--split",
+        choices=tuple(split.value for split in DatasetSplit),
+        default=DatasetSplit.TEST.value,
+        help=f"Prepared split to evaluate. Default: {DatasetSplit.TEST.value}.",
+    )
+    dense_parser.add_argument(
         "--top-k",
         dest="top_k_values",
         action="append",
@@ -579,6 +660,77 @@ def _run_retrieval_bm25(arguments: argparse.Namespace) -> int:
     print(f"  MRR: {result.metrics.mrr:.6f}")
     print(f"Predictions: {result.predictions_path}")
     print(f"Metrics: {result.metrics_path}")
+    return 0
+
+
+def _run_retrieval_dense(arguments: argparse.Namespace) -> int:
+    finqa_directory = cast(Path | None, arguments.finqa_directory)
+    docfinqa_directory = cast(Path | None, arguments.docfinqa_directory)
+    output_directory = cast(Path, arguments.output_directory)
+    bm25_metrics_path = cast(Path, arguments.bm25_metrics)
+    cache_directory = cast(Path | None, arguments.cache_directory)
+    model_id = cast(str, arguments.embedding_model)
+    model_revision = cast(str, arguments.model_revision)
+    batch_size = cast(int, arguments.batch_size)
+    device = cast(str, arguments.device)
+    split = DatasetSplit(cast(str, arguments.split))
+    top_k_values = cast(list[int] | None, arguments.top_k_values)
+    dataset_directories: dict[DatasetName, Path] = {}
+
+    if finqa_directory is not None:
+        dataset_directories[DatasetName.FINQA] = finqa_directory
+
+    if docfinqa_directory is not None:
+        dataset_directories[DatasetName.DOCFINQA] = docfinqa_directory
+
+    if not dataset_directories:
+        print(
+            "error: retrieval dense requires --finqa and/or --docfinqa",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        embedder = SentenceTransformerEmbedder(
+            model_id=model_id,
+            model_revision=model_revision,
+            device=device,
+            show_progress=True,
+        )
+        result = run_dense_benchmark(
+            dataset_directories=dataset_directories,
+            output_directory=output_directory,
+            bm25_metrics_path=bm25_metrics_path,
+            embedder=embedder,
+            batch_size=batch_size,
+            split=split,
+            cache_directory=cache_directory,
+            k_values=(DEFAULT_K_VALUES if top_k_values is None else tuple(top_k_values)),
+        )
+    except (OSError, RuntimeError, ValueError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+
+    print("Completed dense retrieval benchmark:")
+    print(f"  Model: {embedder.model_id}@{embedder.model_revision}")
+    print(f"  Device: {embedder.device}")
+    print(f"  Embedding dimension: {embedder.dimension}")
+    print(f"  {result.metrics.query_count} queries")
+    print(f"  {result.document_count} documents")
+    print(f"  {result.indexed_chunk_count} indexed chunks")
+
+    for k, value in result.metrics.hit_rate_at_k:
+        print(f"  Hit Rate@{k}: {value:.6f}")
+
+    for k, value in result.metrics.recall_at_k:
+        print(f"  Recall@{k}: {value:.6f}")
+
+    print(f"  MRR: {result.metrics.mrr:.6f}")
+    cache_status = "reused" if result.embedding_cache_reused else "created"
+    print(f"Embedding cache ({cache_status}): {result.embeddings_path}")
+    print(f"Predictions: {result.predictions_path}")
+    print(f"Metrics: {result.metrics_path}")
+    print(f"Comparison: {result.comparison_path}")
     return 0
 
 
