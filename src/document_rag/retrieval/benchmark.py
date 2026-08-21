@@ -81,6 +81,120 @@ class _LoadedDataset:
     examples: tuple[DatasetExample, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class FrozenBenchmarkDataset:
+    """One dataset's immutable questions and per-document chunk corpus."""
+
+    dataset: DatasetName
+    chunks_by_document: tuple[tuple[str, tuple[DocumentChunk, ...]], ...]
+    examples: tuple[DatasetExample, ...]
+    counts: BenchmarkDatasetCounts
+
+
+@dataclass(frozen=True, slots=True)
+class FrozenBenchmarkCorpus:
+    """Normalized benchmark inputs shared by lexical and dense retrieval."""
+
+    datasets: tuple[FrozenBenchmarkDataset, ...]
+    corpus_sha256: str
+    query_set_sha256: str
+
+    @property
+    def chunks(self) -> tuple[DocumentChunk, ...]:
+        """Return all chunks in stable dataset and document order."""
+
+        return tuple(
+            chunk
+            for dataset in self.datasets
+            for _, chunks in dataset.chunks_by_document
+            for chunk in chunks
+        )
+
+    @property
+    def examples(self) -> tuple[DatasetExample, ...]:
+        """Return all questions in stable dataset and example order."""
+
+        return tuple(example for dataset in self.datasets for example in dataset.examples)
+
+    @property
+    def dataset_counts(
+        self,
+    ) -> tuple[tuple[DatasetName, BenchmarkDatasetCounts], ...]:
+        """Return dataset counts in stable dataset order."""
+
+        return tuple((dataset.dataset, dataset.counts) for dataset in self.datasets)
+
+    @property
+    def document_count(self) -> int:
+        """Return the number of indexed documents."""
+
+        return sum(dataset.counts.document_count for dataset in self.datasets)
+
+    @property
+    def indexed_chunk_count(self) -> int:
+        """Return the number of indexed chunks."""
+
+        return sum(dataset.counts.indexed_chunk_count for dataset in self.datasets)
+
+
+def load_frozen_benchmark_corpus(
+    *,
+    dataset_directories: Mapping[DatasetName, Path],
+    split: DatasetSplit = DatasetSplit.TEST,
+) -> FrozenBenchmarkCorpus:
+    """Load the exact normalized corpus and questions used by BM25."""
+
+    if not dataset_directories:
+        raise ValueError("At least one normalized dataset directory is required.")
+
+    loaded_datasets = tuple(
+        _load_dataset(
+            dataset=dataset,
+            directory=Path(directory),
+            split=split,
+        )
+        for dataset, directory in sorted(
+            dataset_directories.items(),
+            key=lambda item: item[0].value,
+        )
+    )
+    seen_document_ids: set[str] = set()
+    frozen_datasets: list[FrozenBenchmarkDataset] = []
+
+    for loaded in loaded_datasets:
+        document_ids = {document.document_id for document in loaded.documents}
+        duplicate_document_ids = seen_document_ids & document_ids
+
+        if duplicate_document_ids:
+            duplicate = min(duplicate_document_ids)
+            raise ValueError(f"Document ID appears in multiple datasets: {duplicate!r}.")
+
+        seen_document_ids.update(document_ids)
+        chunks_by_document = _build_chunks_by_document(loaded)
+        ordered_chunks = tuple(sorted(chunks_by_document.items()))
+        chunk_count = sum(len(chunks) for _, chunks in ordered_chunks)
+        ordered_examples = tuple(sorted(loaded.examples, key=lambda example: example.example_id))
+        frozen_datasets.append(
+            FrozenBenchmarkDataset(
+                dataset=loaded.dataset,
+                chunks_by_document=ordered_chunks,
+                examples=ordered_examples,
+                counts=BenchmarkDatasetCounts(
+                    document_count=len(loaded.documents),
+                    indexed_chunk_count=chunk_count,
+                    query_count=len(ordered_examples),
+                ),
+            )
+        )
+
+    datasets = tuple(frozen_datasets)
+    return FrozenBenchmarkCorpus(
+        datasets=datasets,
+        corpus_sha256=_hash_benchmark_chunks(datasets),
+        query_set_sha256=_hash_benchmark_queries(datasets),
+    )
+
+
 def run_bm25_benchmark(
     *,
     dataset_directories: Mapping[DatasetName, Path],
@@ -163,19 +277,7 @@ def run_bm25_benchmark(
     predictions_path = output_root / PREDICTIONS_FILENAME
     metrics_path = output_root / METRICS_FILENAME
 
-    prediction_bytes = b"".join(
-        (
-            json.dumps(
-                evaluation.to_record(),
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-                allow_nan=False,
-            )
-            + "\n"
-        ).encode("utf-8")
-        for evaluation in evaluations
-    )
+    prediction_bytes = serialize_evaluations_jsonl(evaluations)
     metrics_payload = _build_metrics_payload(
         evaluations=evaluations,
         metrics=metrics,
@@ -196,8 +298,8 @@ def run_bm25_benchmark(
         + "\n"
     ).encode("utf-8")
 
-    _write_bytes_atomically(predictions_path, prediction_bytes)
-    _write_bytes_atomically(metrics_path, metrics_bytes)
+    write_bytes_atomically(predictions_path, prediction_bytes)
+    write_bytes_atomically(metrics_path, metrics_bytes)
 
     return BM25BenchmarkResult(
         predictions_path=predictions_path,
@@ -476,12 +578,10 @@ def _build_metrics_payload(
     split: DatasetSplit,
     k_values: tuple[int, ...],
 ) -> dict[str, object]:
-    metrics_by_dataset = {
-        dataset.value: aggregate_evaluations(
-            evaluation for evaluation in evaluations if evaluation.dataset is dataset
-        ).to_record()
-        for dataset, _ in dataset_counts
-    }
+    metrics_by_dataset = build_metrics_by_dataset(
+        evaluations=evaluations,
+        dataset_counts=dataset_counts,
+    )
 
     return {
         "benchmark_config": {
@@ -510,6 +610,46 @@ def _hash_elements(elements: Iterable[DocumentElement]) -> str:
     return digest.hexdigest()
 
 
+def _hash_benchmark_chunks(
+    datasets: tuple[FrozenBenchmarkDataset, ...],
+) -> str:
+    digest = sha256()
+
+    for dataset in datasets:
+        _update_length_prefixed(digest, dataset.dataset.value)
+
+        for document_id, chunks in dataset.chunks_by_document:
+            _update_length_prefixed(digest, document_id)
+
+            for chunk in chunks:
+                _update_length_prefixed(digest, chunk.chunk_id)
+                _update_length_prefixed(digest, chunk.text)
+
+                for source_element_id in chunk.source_element_ids:
+                    _update_length_prefixed(digest, source_element_id)
+
+    return digest.hexdigest()
+
+
+def _hash_benchmark_queries(
+    datasets: tuple[FrozenBenchmarkDataset, ...],
+) -> str:
+    digest = sha256()
+
+    for dataset in datasets:
+        _update_length_prefixed(digest, dataset.dataset.value)
+
+        for example in dataset.examples:
+            _update_length_prefixed(digest, example.example_id)
+            _update_length_prefixed(digest, example.question.document_id)
+            _update_length_prefixed(digest, example.question.text)
+
+            for supporting_fact in example.supporting_facts:
+                _update_length_prefixed(digest, supporting_fact.element_id)
+
+    return digest.hexdigest()
+
+
 def _build_normalized_chunk_id(
     *,
     document_id: str,
@@ -530,7 +670,44 @@ def _update_length_prefixed(digest: Any, value: str) -> None:
     digest.update(encoded)
 
 
-def _write_bytes_atomically(path: Path, content: bytes) -> None:
+def serialize_evaluations_jsonl(
+    evaluations: Iterable[QueryRetrievalEvaluation],
+) -> bytes:
+    """Serialize per-query evaluations as stable compact JSON Lines."""
+
+    return b"".join(
+        (
+            json.dumps(
+                evaluation.to_record(),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+            + "\n"
+        ).encode("utf-8")
+        for evaluation in evaluations
+    )
+
+
+def build_metrics_by_dataset(
+    *,
+    evaluations: tuple[QueryRetrievalEvaluation, ...],
+    dataset_counts: tuple[tuple[DatasetName, BenchmarkDatasetCounts], ...],
+) -> dict[str, dict[str, object]]:
+    """Aggregate metrics independently for every benchmark dataset."""
+
+    return {
+        dataset.value: aggregate_evaluations(
+            evaluation for evaluation in evaluations if evaluation.dataset is dataset
+        ).to_record()
+        for dataset, _ in dataset_counts
+    }
+
+
+def write_bytes_atomically(path: Path, content: bytes) -> None:
+    """Atomically replace one artifact with deterministic bytes."""
+
     with tempfile.NamedTemporaryFile(
         mode="wb",
         prefix=f".{path.name}.",
