@@ -218,5 +218,5 @@ __marimo__/
 .streamlit/secrets.toml
 data/
 
-# Generated dense-retrieval embedding caches
-artifacts/**/embedding_cache/
+# Generated retrieval benchmark artifacts
+artifacts/
