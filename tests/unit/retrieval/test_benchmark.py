@@ -25,6 +25,7 @@ from document_rag.domain.questions import Question
 from document_rag.retrieval.benchmark import run_bm25_benchmark
 from document_rag.retrieval.dense import FloatMatrix
 from document_rag.retrieval.dense_benchmark import run_dense_benchmark
+from document_rag.retrieval.hybrid_benchmark import run_hybrid_benchmark
 
 
 class FakeBenchmarkEmbedder:
@@ -276,4 +277,72 @@ def test_dense_benchmark_reuses_frozen_corpus_and_writes_comparison(
         "hit_rate_at_k": {"1": 0.0, "3": 0.0, "5": 0.0},
         "mrr": 0.0,
         "recall_at_k": {"1": 0.0, "3": 0.0, "5": 0.0},
+    }
+
+
+def test_hybrid_benchmark_reuses_both_baselines_and_writes_diagnostics(
+    tmp_path: Path,
+) -> None:
+    """Hybrid output should deterministically compare both frozen retrievers."""
+
+    dataset_root = tmp_path / "finqa"
+    build_normalized_finqa(dataset_root)
+    bm25 = run_bm25_benchmark(
+        dataset_directories={DatasetName.FINQA: dataset_root},
+        output_directory=tmp_path / "bm25",
+    )
+    dense = run_dense_benchmark(
+        dataset_directories={DatasetName.FINQA: dataset_root},
+        output_directory=tmp_path / "dense",
+        bm25_metrics_path=bm25.metrics_path,
+        embedder=FakeBenchmarkEmbedder(),
+        batch_size=2,
+    )
+    first = run_hybrid_benchmark(
+        dataset_directories={DatasetName.FINQA: dataset_root},
+        output_directory=tmp_path / "hybrid-first",
+        bm25_metrics_path=bm25.metrics_path,
+        dense_metrics_path=dense.metrics_path,
+        embedder=FakeBenchmarkEmbedder(),
+        rrf_k=60,
+        candidate_k=2,
+        batch_size=2,
+        cache_directory=dense.embeddings_path.parent,
+    )
+    second = run_hybrid_benchmark(
+        dataset_directories={DatasetName.FINQA: dataset_root},
+        output_directory=tmp_path / "hybrid-second",
+        bm25_metrics_path=bm25.metrics_path,
+        dense_metrics_path=dense.metrics_path,
+        embedder=FakeBenchmarkEmbedder(),
+        rrf_k=60,
+        candidate_k=2,
+        batch_size=2,
+        cache_directory=dense.embeddings_path.parent,
+    )
+
+    assert first.embedding_cache_reused is True
+    assert first.predictions_path.read_bytes() == second.predictions_path.read_bytes()
+    assert first.metrics_path.read_bytes() == second.metrics_path.read_bytes()
+    assert first.comparison_path.read_bytes() == second.comparison_path.read_bytes()
+    assert first.indexed_chunk_count == bm25.indexed_chunk_count == 2
+
+    prediction = json.loads(first.predictions_path.read_text(encoding="utf-8"))
+    assert prediction["retrieved"][0]["bm25_rank"] == 1
+    assert prediction["retrieved"][0]["dense_rank"] == 1
+    assert prediction["retrieved"][0]["rrf_score"] == prediction["retrieved"][0]["score"]
+
+    metrics = json.loads(first.metrics_path.read_text(encoding="utf-8"))
+    assert metrics["benchmark_config"]["retriever_type"] == "hybrid_rrf"
+    assert metrics["benchmark_config"]["rrf_k"] == 60
+    assert metrics["benchmark_config"]["candidate_k"] == 2
+    dense_metrics = json.loads(dense.metrics_path.read_text(encoding="utf-8"))
+    assert metrics["benchmark_identity"] == dense_metrics["benchmark_identity"]
+
+    comparison = json.loads(first.comparison_path.read_text(encoding="utf-8"))
+    combined = comparison["results"]["combined"]
+    assert set(combined) == {"absolute_delta", "bm25", "dense", "hybrid"}
+    assert set(combined["absolute_delta"]) == {
+        "hybrid_minus_bm25",
+        "hybrid_minus_dense",
     }
