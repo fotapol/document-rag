@@ -22,6 +22,13 @@ from document_rag.retrieval.evaluation import (
     evaluate_query,
     normalize_k_values,
 )
+from document_rag.retrieval.hybrid import (
+    DEFAULT_CANDIDATE_K,
+    DEFAULT_RRF_K,
+    HybridRetrievalResult,
+    ReciprocalRankFusionRetriever,
+    fuse_rankings,
+)
 from document_rag.retrieval.models import (
     QueryRetrievalEvaluation,
     RetrievalMetrics,
@@ -29,20 +36,25 @@ from document_rag.retrieval.models import (
 )
 
 __all__ = [
+    "DEFAULT_CANDIDATE_K",
     "DEFAULT_EMBEDDING_MODEL",
     "DEFAULT_EMBEDDING_MODEL_REVISION",
     "DEFAULT_K_VALUES",
+    "DEFAULT_RRF_K",
     "TOKENIZATION_STRATEGY",
     "BM25Retriever",
     "DenseEmbedder",
     "DenseRetriever",
+    "HybridRetrievalResult",
     "QueryRetrievalEvaluation",
+    "ReciprocalRankFusionRetriever",
     "RetrievalEvaluationError",
     "RetrievalMetrics",
     "RetrievalResult",
     "SentenceTransformerEmbedder",
     "aggregate_evaluations",
     "evaluate_query",
+    "fuse_rankings",
     "lexical_tokenize",
     "normalize_embedding_matrix",
     "normalize_k_values",
