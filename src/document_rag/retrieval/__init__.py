@@ -1,9 +1,11 @@
 """Deterministic retrieval and evaluation services."""
 
 from document_rag.retrieval.bm25 import (
+    TABLE_QUERY_NORMALIZATION_STRATEGY,
     TOKENIZATION_STRATEGY,
     BM25Retriever,
     lexical_tokenize,
+    normalize_bm25_query,
 )
 from document_rag.retrieval.dense import (
     DenseEmbedder,
@@ -34,6 +36,11 @@ from document_rag.retrieval.models import (
     RetrievalMetrics,
     RetrievalResult,
 )
+from document_rag.retrieval.table_units import (
+    ParentAwareRetriever,
+    TableRetrievalCorpus,
+    build_table_retrieval_corpus,
+)
 
 __all__ = [
     "DEFAULT_CANDIDATE_K",
@@ -41,21 +48,26 @@ __all__ = [
     "DEFAULT_EMBEDDING_MODEL_REVISION",
     "DEFAULT_K_VALUES",
     "DEFAULT_RRF_K",
+    "TABLE_QUERY_NORMALIZATION_STRATEGY",
     "TOKENIZATION_STRATEGY",
     "BM25Retriever",
     "DenseEmbedder",
     "DenseRetriever",
     "HybridRetrievalResult",
+    "ParentAwareRetriever",
     "QueryRetrievalEvaluation",
     "ReciprocalRankFusionRetriever",
     "RetrievalEvaluationError",
     "RetrievalMetrics",
     "RetrievalResult",
     "SentenceTransformerEmbedder",
+    "TableRetrievalCorpus",
     "aggregate_evaluations",
+    "build_table_retrieval_corpus",
     "evaluate_query",
     "fuse_rankings",
     "lexical_tokenize",
+    "normalize_bm25_query",
     "normalize_embedding_matrix",
     "normalize_k_values",
 ]

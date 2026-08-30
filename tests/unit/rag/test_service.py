@@ -175,6 +175,31 @@ def test_real_factory_rejects_an_empty_document() -> None:
         factory.build(())
 
 
+def test_real_factory_indexes_table_rows_instead_of_the_multirow_parent() -> None:
+    """The RAG wiring should search canonical rows and retain parent recovery."""
+
+    table = (
+        "# Revenue\n\n<table><thead><tr><th>Quarter</th><th>Region</th>"
+        "<th>Revenue</th></tr></thead><tbody>"
+        "<tr><td>2024 Q1</td><td>Europe</td><td>$200</td></tr>"
+        "<tr><td>2024 Q1</td><td>North America</td><td>$220</td></tr>"
+        "</tbody></table>"
+    )
+    parent = _chunk("chunk:table", 3, table)
+    factory = InMemoryHybridIndexFactory(
+        RAGConfig(top_k=2, candidate_k=2),
+        embedder=FakeEmbedder(),
+    )
+
+    retriever = factory.build((parent,))
+    results = retriever.search("North America revenue 2024 Q1", top_k=2)
+
+    assert len(results) == 2
+    assert all(result.chunk.retrieval_unit_kind == "table_row" for result in results)
+    assert all(result.chunk.chunk_id != parent.chunk_id for result in results)
+    assert retriever.parent_for(results[0].chunk) == parent
+
+
 def _chunk(chunk_id: str, page: int, text: str) -> DocumentChunk:
     return DocumentChunk(
         chunk_id=chunk_id,

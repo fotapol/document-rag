@@ -6,6 +6,7 @@ The web application now executes the first complete document question-answering 
 PDF upload
 -> LlamaParse Markdown
 -> structure-aware DocumentChunk records
+-> canonical table-row retrieval units (narrative chunks remain available)
 -> in-memory BM25 + BGE dense indexes
 -> deterministic Reciprocal Rank Fusion
 -> top five grounded context chunks
@@ -24,7 +25,8 @@ single-session MVP rather than multi-user persistence.
 - `RAGService` owns the current in-memory index and orchestrates retrieval, prompting, and
   generation.
 - `InMemoryHybridIndexFactory` composes the existing `BM25Retriever`, `DenseRetriever`,
-  `SentenceTransformerEmbedder`, and `ReciprocalRankFusionRetriever` classes.
+  `SentenceTransformerEmbedder`, and `ReciprocalRankFusionRetriever` classes. Before indexing, it
+  converts HTML and Markdown tables to canonical row children while preserving ordinary prose.
 - `build_grounded_prompt` labels every context item with its page and deterministic chunk ID. Its
   system instruction requires context-only answers and an explicit unsupported-answer response.
 - `QwenLoraGenerator` lazily loads the pinned base model and attaches the published PEFT adapter
@@ -32,6 +34,9 @@ single-session MVP rather than multi-user persistence.
 
 The dense embedding model loads during the first successful PDF upload. The Qwen base model and
 LoRA adapter load only when the first question is submitted.
+
+See [`TABLE_AWARE_RETRIEVAL.md`](TABLE_AWARE_RETRIEVAL.md) for the row representation, source and
+parent lineage rules, deduplication behavior, and the BM25 configuration used by the application.
 
 ## Configuration
 

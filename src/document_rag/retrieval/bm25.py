@@ -3,17 +3,52 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+from typing import Literal
 
-from rank_bm25 import BM25Okapi  # type: ignore[import-untyped]
+from rank_bm25 import BM25Okapi, BM25Plus  # type: ignore[import-untyped]
 
 from document_rag.ingestion.chunking import DocumentChunk
 from document_rag.retrieval.models import RetrievalResult
 
 TOKENIZATION_STRATEGY = "unicode_casefold_financial_lexical_v1"
+TABLE_QUERY_NORMALIZATION_STRATEGY = "financial_stopwords_deduplicated_v1"
 _LEXICAL_TOKEN_PATTERN = re.compile(
     r"[^\W_]+(?:[.,][^\W_]+)*|[$€£¥%]",
     re.UNICODE,
+)
+_QUERY_STOP_WORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "by",
+        "did",
+        "do",
+        "does",
+        "for",
+        "from",
+        "how",
+        "in",
+        "is",
+        "it",
+        "much",
+        "of",
+        "on",
+        "the",
+        "to",
+        "was",
+        "were",
+        "what",
+        "when",
+        "which",
+        "who",
+        "with",
+    }
 )
 
 
@@ -28,11 +63,39 @@ def lexical_tokenize(text: str) -> tuple[str, ...]:
     return tuple(_LEXICAL_TOKEN_PATTERN.findall(text.casefold()))
 
 
-class BM25Retriever:
-    """In-memory BM25Okapi index with deterministic tie-breaking."""
+def normalize_bm25_query(query: str) -> tuple[str, ...]:
+    """Remove query boilerplate and repeated terms without losing finance tokens.
 
-    def __init__(self, chunks: Iterable[DocumentChunk]) -> None:
+    Values, currencies, percentages, years, and quarter labels are not stop
+    words, so they pass through unchanged. If a question contains only stop
+    words, the lexical tokens are retained rather than producing an empty query.
+    """
+
+    tokens = lexical_tokenize(query)
+    informative_tokens = tuple(token for token in tokens if token not in _QUERY_STOP_WORDS)
+    selected_tokens = informative_tokens or tokens
+    return tuple(dict.fromkeys(selected_tokens))
+
+
+class BM25Retriever:
+    """In-memory BM25 index with deterministic tie-breaking.
+
+    The established benchmark keeps Okapi and the original tokenizer defaults.
+    Session-sized row indexes can opt into BM25+, whose positive inverse-
+    document-frequency weights avoid penalizing common matches in tiny corpora.
+    """
+
+    def __init__(
+        self,
+        chunks: Iterable[DocumentChunk],
+        *,
+        variant: Literal["okapi", "plus"] = "okapi",
+        query_tokenizer: Callable[[str], tuple[str, ...]] = lexical_tokenize,
+    ) -> None:
         """Index unique chunks in stable identity order."""
+
+        if variant not in {"okapi", "plus"}:
+            raise ValueError("variant must be either 'okapi' or 'plus'.")
 
         materialized_chunks = tuple(chunks)
         chunk_ids = [chunk.chunk_id for chunk in materialized_chunks]
@@ -56,7 +119,12 @@ class BM25Retriever:
         if any(not tokens for tokens in tokenized_chunks):
             raise ValueError("Every BM25 chunk must contain at least one lexical token.")
 
-        self._index = BM25Okapi(tokenized_chunks) if tokenized_chunks else None
+        self._index = (
+            (BM25Plus(tokenized_chunks) if variant == "plus" else BM25Okapi(tokenized_chunks))
+            if tokenized_chunks
+            else None
+        )
+        self._query_tokenizer = query_tokenizer
 
     @property
     def chunk_count(self) -> int:
@@ -75,7 +143,7 @@ class BM25Retriever:
         if top_k <= 0:
             raise ValueError("top_k must be positive.")
 
-        query_tokens = lexical_tokenize(query)
+        query_tokens = self._query_tokenizer(query)
 
         if not query_tokens:
             raise ValueError("query must contain at least one lexical token.")

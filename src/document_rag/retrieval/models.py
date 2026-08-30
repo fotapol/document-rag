@@ -35,7 +35,7 @@ class RetrievalResult:
     def to_record(self) -> dict[str, object]:
         """Return the debugging fields stored for one retrieved chunk."""
 
-        return {
+        record: dict[str, object] = {
             "chunk_id": self.chunk.chunk_id,
             "document_id": self.chunk.document_id,
             "page_end": self.chunk.page_end,
@@ -44,6 +44,13 @@ class RetrievalResult:
             "score": self.score,
             "source_element_ids": list(self.chunk.source_element_ids),
         }
+
+        if self.chunk.parent_chunk_id is not None:
+            record["parent_chunk_id"] = self.chunk.parent_chunk_id
+            record["parent_source_element_ids"] = list(self.chunk.parent_source_element_ids)
+            record["retrieval_unit_kind"] = self.chunk.retrieval_unit_kind
+
+        return record
 
 
 @dataclass(frozen=True, slots=True)

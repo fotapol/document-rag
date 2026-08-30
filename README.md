@@ -60,6 +60,11 @@ Open `http://127.0.0.1:8000`, upload one financial PDF, and ask a question about
 it. The detailed configuration and real smoke-test procedure are documented in
 [`docs/RAG_MVP.md`](docs/RAG_MVP.md).
 
+Uploaded tables are indexed as canonical row-level retrieval units so a query
+cannot accidentally combine values from different rows. The row format, parent
+lineage, deduplication, and small-corpus BM25 behavior are documented in
+[`docs/TABLE_AWARE_RETRIEVAL.md`](docs/TABLE_AWARE_RETRIEVAL.md).
+
 ## Project Structure
 ```
 document-rag/
