@@ -3,7 +3,11 @@
 import pytest
 
 from document_rag.ingestion.chunking import DocumentChunk
-from document_rag.retrieval.bm25 import BM25Retriever, lexical_tokenize
+from document_rag.retrieval.bm25 import (
+    BM25Retriever,
+    lexical_tokenize,
+    normalize_bm25_query,
+)
 
 
 def build_chunk(
@@ -53,6 +57,36 @@ def test_lexical_tokenizer_casefolds_financial_terms() -> None:
         "$",
         "2.6m",
     )
+
+
+def test_query_normalization_removes_boilerplate_and_duplicate_terms() -> None:
+    """BM25 should count each meaningful question term only once."""
+
+    assert normalize_bm25_query("What was revenue revenue in 2024 Q1 in North America?") == (
+        "revenue",
+        "2024",
+        "q1",
+        "north",
+        "america",
+    )
+
+
+def test_query_normalization_preserves_financial_values_and_units() -> None:
+    """Currency, percentages, decimals, and units must remain searchable."""
+
+    assert normalize_bm25_query("What was $2.6M as a percentage, 12.5%?") == (
+        "$",
+        "2.6m",
+        "percentage",
+        "12.5",
+        "%",
+    )
+
+
+def test_query_normalization_keeps_stop_words_as_an_all_stopword_fallback() -> None:
+    """A grammatical-only query should remain valid instead of becoming empty."""
+
+    assert normalize_bm25_query("What was it?") == ("what", "was", "it")
 
 
 def test_exact_lexical_match_ranks_relevant_chunk_first() -> None:
