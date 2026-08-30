@@ -6,7 +6,7 @@
         name="viewport"
         content="width=device-width, initial-scale=1"
     >
-    <title>Document RAG ingestion</title>
+    <title>Document RAG</title>
     <style>
         :root {
             color-scheme: light dark;
@@ -31,6 +31,13 @@
         button {
             margin-top: 1rem;
             padding: 0.6rem 1rem;
+        }
+
+        input[type="text"] {
+            box-sizing: border-box;
+            margin-top: 0.5rem;
+            padding: 0.6rem;
+            width: 100%;
         }
 
         .error {
@@ -74,10 +81,11 @@
 </head>
 <body>
     <main>
-        <h1>Document ingestion</h1>
+        <h1>Document RAG</h1>
         <p>
             Upload one PDF. The server validates it, parses it with
-            LlamaParse, and creates deterministic retrieval chunks.
+            LlamaParse, creates deterministic retrieval chunks, and indexes
+            them for grounded financial question answering.
         </p>
 
         <form
@@ -102,7 +110,7 @@
 
         {% if error %}
         <section class="panel error">
-            <h2>Processing failed</h2>
+            <h2>Request failed</h2>
             <p>{{ error }}</p>
         </section>
         {% endif %}
@@ -128,6 +136,72 @@
             </details>
             {% endfor %}
         </section>
+
+        <section class="panel">
+            <h2>Ask this document</h2>
+            <form action="/questions/ask" method="post">
+                <label for="question">Financial question</label>
+                <input
+                    id="question"
+                    name="question"
+                    type="text"
+                    value="{{ question }}"
+                    placeholder="What was the percentage change in revenue?"
+                    required
+                >
+                <button type="submit">Retrieve and answer</button>
+            </form>
+            <p>
+                Answers use the configured top hybrid BM25 + dense results
+                from the currently uploaded document.
+            </p>
+        </section>
+
+        {% if answer %}
+        <section class="panel">
+            <h2>Answer</h2>
+            <p>{{ answer.answer }}</p>
+
+            <h3>Source citations</h3>
+            <ol>
+                {% for citation in answer.citations %}
+                <li>
+                    <strong>Source {{ citation.source_number }}</strong>:
+                    page {{ citation.page_label }},
+                    chunk <code>{{ citation.chunk_id }}</code>
+                </li>
+                {% endfor %}
+            </ol>
+
+            <details>
+                <summary>Retrieved chunks and scores</summary>
+                {% for result in answer.retrieved %}
+                <article class="chunk">
+                    <h3>Source {{ loop.index }}</h3>
+                    <dl class="metadata">
+                        <dt>Chunk ID</dt>
+                        <dd><code>{{ result.chunk_id }}</code></dd>
+                        <dt>Page</dt>
+                        <dd>
+                            {{ result.chunk.page_start }}{% if result.chunk.page_end != result.chunk.page_start %}-{{ result.chunk.page_end }}{% endif %}
+                        </dd>
+                        <dt>RRF score</dt>
+                        <dd>{{ "%.8f" | format(result.score) }}</dd>
+                        {% if result.bm25_rank is defined %}
+                        <dt>BM25 rank</dt>
+                        <dd>{{ result.bm25_rank or "not retrieved" }}</dd>
+                        {% endif %}
+                        {% if result.dense_rank is defined %}
+                        <dt>Dense rank</dt>
+                        <dd>{{ result.dense_rank or "not retrieved" }}</dd>
+                        {% endif %}
+                    </dl>
+                    <pre>{{ result.chunk.text }}</pre>
+                </article>
+                {% endfor %}
+            </details>
+        </section>
+        {% endif %}
 
         <section class="panel">
             <h2>Retrieval chunks</h2>

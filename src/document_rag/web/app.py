@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Annotated, Protocol, cast
 
-from fastapi import FastAPI, Request, UploadFile
+from fastapi import FastAPI, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
@@ -23,6 +23,14 @@ from document_rag.ingestion.llamaparse import (
     LlamaParseService,
     ParsedDocument,
 )
+from document_rag.rag.errors import (
+    RAGConfigurationError,
+    RAGGenerationError,
+    RAGIndexingError,
+    RAGNotIndexedError,
+)
+from document_rag.rag.models import RAGAnswer
+from document_rag.rag.service import build_default_rag_service
 
 LOGGER = logging.getLogger(__name__)
 
@@ -59,9 +67,20 @@ class DocumentChunker(Protocol):
         """Convert one parsed document into normalized chunks."""
 
 
+class QuestionAnsweringService(Protocol):
+    """Application-layer operations used by the web interface."""
+
+    def index_document(self, chunks: tuple[DocumentChunk, ...]) -> None:
+        """Replace the current in-memory document index."""
+
+    def answer(self, question: str) -> RAGAnswer:
+        """Answer one question from the current in-memory index."""
+
+
 def create_app(
     document_parser: DocumentParser | None = None,
     document_chunker: DocumentChunker | None = None,
+    question_answering_service: QuestionAnsweringService | None = None,
 ) -> FastAPI:
     """Create the application and allow dependency injection in tests."""
 
@@ -71,6 +90,9 @@ def create_app(
     )
     app.state.document_parser = document_parser
     app.state.document_chunker = document_chunker or MarkdownChunker()
+    app.state.question_answering_service = question_answering_service
+    app.state.current_document = None
+    app.state.current_chunks = ()
 
     @app.get("/health")
     async def health() -> JSONResponse:
@@ -132,8 +154,16 @@ def create_app(
 
             chunker = get_document_chunker(request)
             chunks = chunker.chunk(document)
+            question_answering = get_question_answering_service(request)
+            await run_in_threadpool(
+                question_answering.index_document,
+                chunks,
+            )
             chunks_jsonl = chunks_to_jsonl(chunks)
-        except LlamaParseConfigurationError as exc:
+        except (
+            LlamaParseConfigurationError,
+            RAGConfigurationError,
+        ) as exc:
             return render_result(
                 request,
                 error=str(exc),
@@ -142,6 +172,7 @@ def create_app(
         except (
             LlamaParseProcessingError,
             DocumentChunkingError,
+            RAGIndexingError,
         ) as exc:
             LOGGER.warning(
                 "Document processing failed for %s: %s",
@@ -164,11 +195,91 @@ def create_app(
                 status_code=502,
             )
 
+        request.app.state.current_document = document
+        request.app.state.current_chunks = chunks
+
         return render_result(
             request,
             document=document,
             chunks=chunks,
             chunks_jsonl=chunks_jsonl,
+            status_code=200,
+        )
+
+    @app.post("/questions/ask", response_class=HTMLResponse)
+    async def ask_question(
+        request: Request,
+        question: Annotated[str, Form()],
+    ) -> HTMLResponse:
+        """Answer one question from the current application-session index."""
+
+        document, chunks = get_current_document(request)
+        normalized_question = question.strip()
+
+        if not normalized_question:
+            return render_result(
+                request,
+                document=document,
+                chunks=chunks,
+                chunks_jsonl=chunks_to_jsonl(chunks),
+                error="Enter a question about the uploaded document.",
+                question=question,
+                status_code=400,
+            )
+
+        try:
+            question_answering = get_question_answering_service(request)
+            answer = await run_in_threadpool(
+                question_answering.answer,
+                normalized_question,
+            )
+        except RAGNotIndexedError as exc:
+            return render_result(
+                request,
+                error=str(exc),
+                question=normalized_question,
+                status_code=409,
+            )
+        except RAGConfigurationError as exc:
+            return render_result(
+                request,
+                document=document,
+                chunks=chunks,
+                chunks_jsonl=chunks_to_jsonl(chunks),
+                error=str(exc),
+                question=normalized_question,
+                status_code=503,
+            )
+        except RAGGenerationError as exc:
+            LOGGER.warning("Answer generation failed: %s", exc)
+            return render_result(
+                request,
+                document=document,
+                chunks=chunks,
+                chunks_jsonl=chunks_to_jsonl(chunks),
+                error=str(exc),
+                question=normalized_question,
+                status_code=502,
+            )
+        except Exception:
+            LOGGER.exception("Unexpected question-answering failure")
+            return render_result(
+                request,
+                document=document,
+                chunks=chunks,
+                chunks_jsonl=chunks_to_jsonl(chunks),
+                error="Unexpected question-answering failure.",
+                question=normalized_question,
+                status_code=502,
+            )
+
+        return render_result(
+            request,
+            document=document,
+            chunks=chunks,
+            chunks_jsonl=chunks_to_jsonl(chunks),
+            question=normalized_question,
+            answer=answer,
             status_code=200,
         )
 
@@ -227,6 +338,37 @@ def get_document_chunker(request: Request) -> DocumentChunker:
     )
 
 
+def get_question_answering_service(request: Request) -> QuestionAnsweringService:
+    """Return the injected service or lazily create the real RAG pipeline."""
+
+    service = cast(
+        QuestionAnsweringService | None,
+        request.app.state.question_answering_service,
+    )
+
+    if service is None:
+        service = build_default_rag_service()
+        request.app.state.question_answering_service = service
+
+    return service
+
+
+def get_current_document(
+    request: Request,
+) -> tuple[ParsedDocument | None, tuple[DocumentChunk, ...]]:
+    """Return the document and chunks stored for the current server session."""
+
+    document = cast(
+        ParsedDocument | None,
+        request.app.state.current_document,
+    )
+    chunks = cast(
+        tuple[DocumentChunk, ...],
+        request.app.state.current_chunks,
+    )
+    return document, chunks
+
+
 def render_result(
     request: Request,
     *,
@@ -234,6 +376,8 @@ def render_result(
     chunks: tuple[DocumentChunk, ...] = (),
     chunks_jsonl: str = "",
     error: str | None = None,
+    question: str = "",
+    answer: RAGAnswer | None = None,
     status_code: int,
 ) -> HTMLResponse:
     """Render the upload page, processing result, or user-facing error."""
@@ -246,6 +390,8 @@ def render_result(
             "chunks": chunks,
             "chunks_jsonl": chunks_jsonl,
             "error": error,
+            "question": question,
+            "answer": answer,
             "max_upload_mb": MAX_UPLOAD_BYTES // 1024 // 1024,
         },
         status_code=status_code,
