@@ -45,6 +45,21 @@ uv run pytest
 
 The same checks run automatically on every `push` and `pull_request` to `main`.
 
+## Run the RAG MVP
+
+Create `.env` from `.env.example`, set `LLAMA_CLOUD_API_KEY`, then start the
+application from the repository root:
+
+```powershell
+Copy-Item .env.example .env
+uv sync
+uv run uvicorn document_rag.web.app:app --reload --env-file .env
+```
+
+Open `http://127.0.0.1:8000`, upload one financial PDF, and ask a question about
+it. The detailed configuration and real smoke-test procedure are documented in
+[`docs/RAG_MVP.md`](docs/RAG_MVP.md).
+
 ## Project Structure
 ```
 document-rag/

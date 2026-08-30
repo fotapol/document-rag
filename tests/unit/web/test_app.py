@@ -1,14 +1,18 @@
 """Tests for the document-ingestion web application."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from fastapi.testclient import TestClient
 
+from document_rag.ingestion.chunking import DocumentChunk
 from document_rag.ingestion.llamaparse import (
     LlamaParseProcessingError,
     ParsedDocument,
     ParsedPage,
 )
+from document_rag.rag.errors import RAGNotIndexedError
+from document_rag.rag.models import RAGAnswer, SourceCitation
+from document_rag.retrieval.models import RetrievalResult
 from document_rag.web.app import create_app
 
 
@@ -57,6 +61,38 @@ class FailingParser:
         raise LlamaParseProcessingError("Parser failed.")
 
 
+@dataclass
+class FakeQuestionAnsweringService:
+    """Keep a fake session index and answer without external models."""
+
+    indexed_chunks: tuple[DocumentChunk, ...] = ()
+    questions: list[str] = field(default_factory=list)
+
+    def index_document(self, chunks: tuple[DocumentChunk, ...]) -> None:
+        self.indexed_chunks = chunks
+
+    def answer(self, question: str) -> RAGAnswer:
+        if not self.indexed_chunks:
+            raise RAGNotIndexedError("Upload and index a PDF before asking a question.")
+
+        self.questions.append(question)
+        chunk = self.indexed_chunks[0]
+        result = RetrievalResult(chunk=chunk, score=0.031, rank=1)
+        return RAGAnswer(
+            question=question,
+            answer="Revenue was $100 [Source 1].",
+            citations=(
+                SourceCitation(
+                    source_number=1,
+                    chunk_id=chunk.chunk_id,
+                    page_start=chunk.page_start,
+                    page_end=chunk.page_end,
+                ),
+            ),
+            retrieved=(result,),
+        )
+
+
 def test_health() -> None:
     """The process health endpoint should return HTTP 200."""
 
@@ -71,7 +107,13 @@ def test_health() -> None:
 def test_parse_and_chunk_pdf() -> None:
     """A valid PDF should render Markdown, chunks, and JSONL download."""
 
-    client = TestClient(create_app(FakeParser()))
+    question_answering = FakeQuestionAnsweringService()
+    client = TestClient(
+        create_app(
+            FakeParser(),
+            question_answering_service=question_answering,
+        )
+    )
 
     response = client.post(
         "/documents/parse",
@@ -92,6 +134,63 @@ def test_parse_and_chunk_pdf() -> None:
     assert "Download chunks as JSONL" in response.text
     assert "Tokens" in response.text
     assert "chunk:" in response.text
+    assert "Ask this document" in response.text
+    assert len(question_answering.indexed_chunks) == 1
+
+
+def test_ask_question_displays_answer_citation_and_debug_context() -> None:
+    """The web MVP should preserve its in-memory index across form requests."""
+
+    question_answering = FakeQuestionAnsweringService()
+    client = TestClient(
+        create_app(
+            FakeParser(),
+            question_answering_service=question_answering,
+        )
+    )
+    upload_response = client.post(
+        "/documents/parse",
+        files={
+            "file": (
+                "report.pdf",
+                b"%PDF-1.7 fake content",
+                "application/pdf",
+            )
+        },
+    )
+
+    response = client.post(
+        "/questions/ask",
+        data={"question": "What was revenue?"},
+    )
+
+    assert upload_response.status_code == 200
+    assert response.status_code == 200
+    assert question_answering.questions == ["What was revenue?"]
+    assert "Revenue was $100 [Source 1]." in response.text
+    assert "Source citations" in response.text
+    assert "page 1" in response.text
+    assert question_answering.indexed_chunks[0].chunk_id in response.text
+    assert "Retrieved chunks and scores" in response.text
+
+
+def test_ask_question_before_upload_returns_conflict() -> None:
+    """The UI should explain that a PDF must be uploaded first."""
+
+    client = TestClient(
+        create_app(
+            FakeParser(),
+            question_answering_service=FakeQuestionAnsweringService(),
+        )
+    )
+
+    response = client.post(
+        "/questions/ask",
+        data={"question": "What was revenue?"},
+    )
+
+    assert response.status_code == 409
+    assert "Upload and index a PDF" in response.text
 
 
 def test_reject_non_pdf_extension() -> None:
