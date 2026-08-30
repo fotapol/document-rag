@@ -12,10 +12,14 @@ from document_rag.rag.errors import RAGGenerationError, RAGIndexingError, RAGNot
 from document_rag.rag.generation import QwenLoraGenerator
 from document_rag.rag.models import GroundedPrompt, RAGAnswer
 from document_rag.rag.prompting import build_citations, build_grounded_prompt
-from document_rag.retrieval.bm25 import BM25Retriever
+from document_rag.retrieval.bm25 import BM25Retriever, normalize_bm25_query
 from document_rag.retrieval.dense import DenseEmbedder, DenseRetriever
 from document_rag.retrieval.embeddings import SentenceTransformerEmbedder
 from document_rag.retrieval.hybrid import RankedRetriever, ReciprocalRankFusionRetriever
+from document_rag.retrieval.table_units import (
+    ParentAwareRetriever,
+    build_table_retrieval_corpus,
+)
 
 
 class RetrieverFactory(Protocol):
@@ -46,7 +50,7 @@ class InMemoryHybridIndexFactory:
         self._config = config
         self._embedder = embedder
 
-    def build(self, chunks: tuple[DocumentChunk, ...]) -> RankedRetriever:
+    def build(self, chunks: tuple[DocumentChunk, ...]) -> ParentAwareRetriever:
         """Create fresh lexical and semantic indexes over one document."""
 
         if not chunks:
@@ -54,17 +58,25 @@ class InMemoryHybridIndexFactory:
 
         try:
             embedder = self._get_embedder()
-            lexical_retriever = BM25Retriever(chunks)
+            corpus = build_table_retrieval_corpus(chunks)
+            lexical_retriever = BM25Retriever(
+                corpus.units,
+                variant="plus",
+                query_tokenizer=normalize_bm25_query,
+            )
             semantic_retriever = DenseRetriever(
-                chunks,
+                corpus.units,
                 embedder=embedder,
                 batch_size=self._config.dense_batch_size,
             )
-            return ReciprocalRankFusionRetriever(
-                lexical_retriever=lexical_retriever,
-                semantic_retriever=semantic_retriever,
-                rrf_k=self._config.rrf_k,
-                candidate_k=self._config.candidate_k,
+            return ParentAwareRetriever(
+                retriever=ReciprocalRankFusionRetriever(
+                    lexical_retriever=lexical_retriever,
+                    semantic_retriever=semantic_retriever,
+                    rrf_k=self._config.rrf_k,
+                    candidate_k=self._config.candidate_k,
+                ),
+                corpus=corpus,
             )
         except RAGIndexingError:
             raise
