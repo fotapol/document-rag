@@ -8,7 +8,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 from hashlib import sha256
 from itertools import pairwise
-from typing import Protocol
+from typing import Literal, Protocol
 
 from document_rag.ingestion.llamaparse import ParsedDocument
 
@@ -133,11 +133,14 @@ class DocumentChunk:
     char_count: int
     token_count: int
     block_count: int
+    retrieval_unit_kind: Literal["chunk", "narrative", "table_row"] = "chunk"
+    parent_chunk_id: str | None = None
+    parent_source_element_ids: tuple[str, ...] = ()
 
     def to_record(self) -> dict[str, object]:
         """Convert the chunk to a JSON-serializable record."""
 
-        return {
+        record: dict[str, object] = {
             "chunk_id": self.chunk_id,
             "document_id": self.document_id,
             "document_sha256": self.document_sha256,
@@ -151,6 +154,17 @@ class DocumentChunk:
             "token_count": self.token_count,
             "block_count": self.block_count,
         }
+
+        if self.retrieval_unit_kind != "chunk":
+            record["retrieval_unit_kind"] = self.retrieval_unit_kind
+
+        if self.parent_chunk_id is not None:
+            record["parent_chunk_id"] = self.parent_chunk_id
+
+        if self.parent_source_element_ids:
+            record["parent_source_element_ids"] = list(self.parent_source_element_ids)
+
+        return record
 
 
 @dataclass(frozen=True, slots=True)
