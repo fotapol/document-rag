@@ -19,3 +19,7 @@ class RAGNotIndexedError(RAGError):
 
 class RAGGenerationError(RAGError):
     """Raised when the answer model cannot load or generate a response."""
+
+
+class RAGEvaluationError(RAGError):
+    """Raised when a frozen RAG evaluation suite or run is invalid."""

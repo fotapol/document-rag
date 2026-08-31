@@ -117,6 +117,9 @@ class ChunkingConfig:
             raise ValueError("overlap_tokens must be smaller than target_tokens.")
 
 
+type RetrievalUnitKind = Literal["chunk", "narrative", "table_row"]
+
+
 @dataclass(frozen=True, slots=True)
 class DocumentChunk:
     """Normalized chunk with stable identity and source metadata."""
@@ -133,7 +136,7 @@ class DocumentChunk:
     char_count: int
     token_count: int
     block_count: int
-    retrieval_unit_kind: Literal["chunk", "narrative", "table_row"] = "chunk"
+    retrieval_unit_kind: RetrievalUnitKind = "chunk"
     parent_chunk_id: str | None = None
     parent_source_element_ids: tuple[str, ...] = ()
 

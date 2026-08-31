@@ -65,6 +65,10 @@ cannot accidentally combine values from different rows. The row format, parent
 lineage, deduplication, and small-corpus BM25 behavior are documented in
 [`docs/TABLE_AWARE_RETRIEVAL.md`](docs/TABLE_AWARE_RETRIEVAL.md).
 
+Base-model and financial-LoRA generation can be compared on identical frozen
+retrieval contexts using the procedure in
+[`docs/RAG_EVALUATION.md`](docs/RAG_EVALUATION.md).
+
 ## Project Structure
 ```
 document-rag/

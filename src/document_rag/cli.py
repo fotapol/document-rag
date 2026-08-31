@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 from time import monotonic
 from typing import cast
@@ -27,6 +28,10 @@ from document_rag.datasets.docfinqa.writer import WrittenDocFinQASplit
 from document_rag.datasets.finqa import prepare_finqa_dataset
 from document_rag.datasets.finqa.writer import WrittenFinQASplit
 from document_rag.datasets.models import DatasetName, DatasetSplit
+from document_rag.rag.config import RAGConfig
+from document_rag.rag.errors import RAGError
+from document_rag.rag.evaluation import run_frozen_rag_evaluation
+from document_rag.rag.generation import QwenBaseLoraComparisonGenerator
 from document_rag.retrieval.benchmark import run_bm25_benchmark
 from document_rag.retrieval.dense_benchmark import run_dense_benchmark
 from document_rag.retrieval.embeddings import (
@@ -65,6 +70,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if arguments.command == "retrieval" and arguments.retrieval_command == "hybrid":
         return _run_retrieval_hybrid(arguments)
+
+    if arguments.command == "rag" and arguments.rag_command == "evaluate":
+        return _run_rag_evaluate(arguments)
 
     parser.error("A command is required")
     return 2
@@ -414,6 +422,60 @@ def _build_parser() -> argparse.ArgumentParser:
         action="append",
         type=int,
         help=("Rank cutoff to evaluate. May be specified more than once. Defaults to 1, 3, and 5."),
+    )
+
+    rag_parser = commands.add_parser(
+        "rag",
+        help="Run end-to-end RAG workflows.",
+    )
+    rag_commands = rag_parser.add_subparsers(dest="rag_command")
+    evaluate_parser = rag_commands.add_parser(
+        "evaluate",
+        help="Compare the pinned base model and LoRA on frozen RAG contexts.",
+    )
+    evaluate_parser.add_argument(
+        "--suite",
+        dest="suite_path",
+        type=Path,
+        required=True,
+        help="Versioned JSON file containing questions and frozen retrieval results.",
+    )
+    evaluate_parser.add_argument(
+        "--output",
+        dest="output_directory",
+        type=Path,
+        required=True,
+        help="Directory for paired predictions and aggregate metrics.",
+    )
+    evaluate_parser.add_argument(
+        "--base-model",
+        help="Override DOCUMENT_RAG_BASE_MODEL_ID for this evaluation.",
+    )
+    evaluate_parser.add_argument(
+        "--base-revision",
+        help="Override DOCUMENT_RAG_BASE_MODEL_REVISION for this evaluation.",
+    )
+    evaluate_parser.add_argument(
+        "--adapter-model",
+        help="Override DOCUMENT_RAG_ADAPTER_MODEL_ID for this evaluation.",
+    )
+    evaluate_parser.add_argument(
+        "--adapter-revision",
+        help="Override DOCUMENT_RAG_ADAPTER_MODEL_REVISION for this evaluation.",
+    )
+    evaluate_parser.add_argument(
+        "--device-map",
+        help="Override DOCUMENT_RAG_GENERATION_DEVICE_MAP, for example auto or cuda.",
+    )
+    evaluate_parser.add_argument(
+        "--max-input-tokens",
+        type=int,
+        help="Override DOCUMENT_RAG_MAX_INPUT_TOKENS.",
+    )
+    evaluate_parser.add_argument(
+        "--max-new-tokens",
+        type=int,
+        help="Override DOCUMENT_RAG_MAX_NEW_TOKENS.",
     )
 
     return parser
@@ -905,6 +967,70 @@ def _run_retrieval_hybrid(arguments: argparse.Namespace) -> int:
     print(f"Metrics: {result.metrics_path}")
     print(f"Comparison: {result.comparison_path}")
     return 0
+
+
+def _run_rag_evaluate(arguments: argparse.Namespace) -> int:
+    suite_path = cast(Path, arguments.suite_path)
+    output_directory = cast(Path, arguments.output_directory)
+
+    try:
+        config = _rag_evaluation_config(arguments)
+        result = run_frozen_rag_evaluation(
+            suite_path=suite_path,
+            output_directory=output_directory,
+            generator=QwenBaseLoraComparisonGenerator(config),
+            config=config,
+        )
+    except (OSError, RAGError, ValueError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+
+    print("Completed frozen-context RAG evaluation:")
+    print(f"  Suite: {result.suite.name} ({len(result.suite.cases)} cases)")
+    print(
+        "  Base overall: "
+        f"{result.base_metrics.overall.correct}/{result.base_metrics.overall.count} "
+        f"({_format_optional_rate(result.base_metrics.overall.accuracy)})"
+    )
+    print(
+        "  Adapter overall: "
+        f"{result.adapter_metrics.overall.correct}/{result.adapter_metrics.overall.count} "
+        f"({_format_optional_rate(result.adapter_metrics.overall.accuracy)})"
+    )
+    print(f"Predictions: {result.predictions_path}")
+    print(f"Metrics: {result.metrics_path}")
+    return 0
+
+
+def _rag_evaluation_config(arguments: argparse.Namespace) -> RAGConfig:
+    config = RAGConfig.from_environment()
+    base_model = cast(str | None, arguments.base_model)
+    base_revision = cast(str | None, arguments.base_revision)
+    adapter_model = cast(str | None, arguments.adapter_model)
+    adapter_revision = cast(str | None, arguments.adapter_revision)
+    device_map = cast(str | None, arguments.device_map)
+    max_input_tokens = cast(int | None, arguments.max_input_tokens)
+    max_new_tokens = cast(int | None, arguments.max_new_tokens)
+    return replace(
+        config,
+        base_model_id=config.base_model_id if base_model is None else base_model,
+        base_model_revision=(
+            config.base_model_revision if base_revision is None else base_revision
+        ),
+        adapter_model_id=config.adapter_model_id if adapter_model is None else adapter_model,
+        adapter_model_revision=(
+            config.adapter_model_revision if adapter_revision is None else adapter_revision
+        ),
+        generation_device_map=(config.generation_device_map if device_map is None else device_map),
+        max_input_tokens=(
+            config.max_input_tokens if max_input_tokens is None else max_input_tokens
+        ),
+        max_new_tokens=(config.max_new_tokens if max_new_tokens is None else max_new_tokens),
+    )
+
+
+def _format_optional_rate(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.2%}"
 
 
 def _parse_splits(
