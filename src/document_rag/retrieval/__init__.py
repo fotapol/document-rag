@@ -12,6 +12,11 @@ from document_rag.retrieval.dense import (
     DenseRetriever,
     normalize_embedding_matrix,
 )
+from document_rag.retrieval.diversity import (
+    DEFAULT_MAX_TABLE_ROWS_PER_PARENT,
+    ParentDiverseRetriever,
+    table_parent_key,
+)
 from document_rag.retrieval.embeddings import (
     DEFAULT_EMBEDDING_MODEL,
     DEFAULT_EMBEDDING_MODEL_REVISION,
@@ -47,6 +52,7 @@ __all__ = [
     "DEFAULT_EMBEDDING_MODEL",
     "DEFAULT_EMBEDDING_MODEL_REVISION",
     "DEFAULT_K_VALUES",
+    "DEFAULT_MAX_TABLE_ROWS_PER_PARENT",
     "DEFAULT_RRF_K",
     "TABLE_QUERY_NORMALIZATION_STRATEGY",
     "TOKENIZATION_STRATEGY",
@@ -55,6 +61,7 @@ __all__ = [
     "DenseRetriever",
     "HybridRetrievalResult",
     "ParentAwareRetriever",
+    "ParentDiverseRetriever",
     "QueryRetrievalEvaluation",
     "ReciprocalRankFusionRetriever",
     "RetrievalEvaluationError",
@@ -70,4 +77,5 @@ __all__ = [
     "normalize_bm25_query",
     "normalize_embedding_matrix",
     "normalize_k_values",
+    "table_parent_key",
 ]
