@@ -14,6 +14,7 @@ from document_rag.rag.models import GroundedPrompt, RAGAnswer
 from document_rag.rag.prompting import build_citations, build_grounded_prompt
 from document_rag.retrieval.bm25 import BM25Retriever, normalize_bm25_query
 from document_rag.retrieval.dense import DenseEmbedder, DenseRetriever
+from document_rag.retrieval.diversity import ParentDiverseRetriever
 from document_rag.retrieval.embeddings import SentenceTransformerEmbedder
 from document_rag.retrieval.hybrid import RankedRetriever, ReciprocalRankFusionRetriever
 from document_rag.retrieval.table_units import (
@@ -69,12 +70,17 @@ class InMemoryHybridIndexFactory:
                 embedder=embedder,
                 batch_size=self._config.dense_batch_size,
             )
+            fused_retriever = ReciprocalRankFusionRetriever(
+                lexical_retriever=lexical_retriever,
+                semantic_retriever=semantic_retriever,
+                rrf_k=self._config.rrf_k,
+                candidate_k=self._config.candidate_k,
+            )
             return ParentAwareRetriever(
-                retriever=ReciprocalRankFusionRetriever(
-                    lexical_retriever=lexical_retriever,
-                    semantic_retriever=semantic_retriever,
-                    rrf_k=self._config.rrf_k,
+                retriever=ParentDiverseRetriever(
+                    retriever=fused_retriever,
                     candidate_k=self._config.candidate_k,
+                    max_table_rows_per_parent=self._config.max_table_rows_per_parent,
                 ),
                 corpus=corpus,
             )

@@ -164,3 +164,18 @@ The result supports two separate follow-ups: add retrieval diversity or parent c
 from one table cannot crowd out narrative evidence, and train a RAG-aligned adapter that preserves
 units/citations and learns explicit unsupported examples. It does not justify retraining until a
 larger frozen development suite is available.
+
+### Parent-diversity follow-up
+
+After adding deterministic post-RRF table-parent diversity, a retrieval-only CUDA diagnostic was
+run with the pinned BGE revision over the 14 unique retrieval units recoverable from the saved
+subset suite. This remains a diagnostic reconstruction rather than a complete-PDF benchmark.
+
+- The exact `$220,000` table row remained rank 1.
+- Annual 2025 revenue evidence entered the production top five at rank 5 instead of rank 18.
+- The 2024-to-2025 comparison evidence entered the production top five at rank 3 instead of rank 17.
+- No final context contained more than two rows from the shared quarterly-table lineage.
+
+These results isolate and fix the previously observed context-crowding failure. They do not change
+the earlier generator conclusion: the current adapter still needs a larger frozen development suite
+and RAG-aligned training examples before a retraining decision can be evaluated reliably.

@@ -200,6 +200,36 @@ def test_real_factory_indexes_table_rows_instead_of_the_multirow_parent() -> Non
     assert retriever.parent_for(results[0].chunk) == parent
 
 
+def test_real_factory_diversifies_table_rows_before_grounding() -> None:
+    """Application wiring should promote another source after one table row."""
+
+    table = (
+        "# Revenue\n\n<table><thead><tr><th>Quarter</th><th>Region</th>"
+        "<th>Revenue</th></tr></thead><tbody>"
+        "<tr><td>2024 Q1</td><td>Europe</td><td>$200</td></tr>"
+        "<tr><td>2024 Q1</td><td>North America</td><td>$220</td></tr>"
+        "<tr><td>2024 Q2</td><td>North America</td><td>$230</td></tr>"
+        "</tbody></table>"
+    )
+    parent = _chunk("chunk:table", 3, table)
+    narrative = _chunk("chunk:annual", 4, "Annual revenue was $900.")
+    factory = InMemoryHybridIndexFactory(
+        RAGConfig(
+            top_k=2,
+            candidate_k=4,
+            max_table_rows_per_parent=1,
+        ),
+        embedder=FakeEmbedder(),
+    )
+
+    retriever = factory.build((parent, narrative))
+    results = retriever.search("North America revenue", top_k=2)
+
+    assert len(results) == 2
+    assert sum(result.chunk.retrieval_unit_kind == "table_row" for result in results) == 1
+    assert any(result.chunk_id == narrative.chunk_id for result in results)
+
+
 def _chunk(chunk_id: str, page: int, text: str) -> DocumentChunk:
     return DocumentChunk(
         chunk_id=chunk_id,

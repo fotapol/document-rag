@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass
 
 from document_rag.rag.errors import RAGConfigurationError
+from document_rag.retrieval.diversity import DEFAULT_MAX_TABLE_ROWS_PER_PARENT
 from document_rag.retrieval.embeddings import (
     DEFAULT_EMBEDDING_MODEL,
     DEFAULT_EMBEDDING_MODEL_REVISION,
@@ -29,6 +30,7 @@ class RAGConfig:
     top_k: int = DEFAULT_TOP_K
     candidate_k: int = DEFAULT_CANDIDATE_K
     rrf_k: int = DEFAULT_RRF_K
+    max_table_rows_per_parent: int = DEFAULT_MAX_TABLE_ROWS_PER_PARENT
     embedding_model_id: str = DEFAULT_EMBEDDING_MODEL
     embedding_model_revision: str | None = DEFAULT_EMBEDDING_MODEL_REVISION
     embedding_device: str = "auto"
@@ -48,6 +50,7 @@ class RAGConfig:
             "top_k": self.top_k,
             "candidate_k": self.candidate_k,
             "rrf_k": self.rrf_k,
+            "max_table_rows_per_parent": self.max_table_rows_per_parent,
             "dense_batch_size": self.dense_batch_size,
             "max_input_tokens": self.max_input_tokens,
             "max_new_tokens": self.max_new_tokens,
@@ -93,6 +96,10 @@ class RAGConfig:
                 DEFAULT_CANDIDATE_K,
             ),
             rrf_k=_environment_int("DOCUMENT_RAG_RRF_K", DEFAULT_RRF_K),
+            max_table_rows_per_parent=_environment_int(
+                "DOCUMENT_RAG_MAX_TABLE_ROWS_PER_PARENT",
+                DEFAULT_MAX_TABLE_ROWS_PER_PARENT,
+            ),
             embedding_model_id=os.getenv(
                 "DOCUMENT_RAG_EMBEDDING_MODEL_ID",
                 DEFAULT_EMBEDDING_MODEL,
