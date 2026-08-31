@@ -54,6 +54,22 @@ weight to terms that occur in at least half of a tiny corpus. In that situation,
 query coordinates can lower a row's score. Dense retrieval still receives the original question,
 and RRF still fuses the two rankings without combining their raw scores.
 
+## Parent-aware result diversity
+
+Row expansion deliberately creates many precise retrieval units, but several sibling rows can
+receive similar lexical and semantic ranks. If all five context positions come from one table,
+strong narrative evidence from another page can remain just below the cutoff.
+
+The application therefore retrieves the existing fused candidate depth and applies a deterministic
+post-fusion selector. It keeps at most `DOCUMENT_RAG_MAX_TABLE_ROWS_PER_PARENT` rows (default `2`)
+whose `parent_source_element_ids` identify the same logical source. Split fragments with different
+parent chunk IDs are still recognized as siblings through that lineage. Ordinary and narrative
+chunks are not capped, so prose remains independently retrievable.
+
+Selection is greedy in original RRF order. The selected results receive contiguous final ranks,
+while their RRF scores, BM25 ranks, dense ranks, chunk IDs, page metadata, and source lineage stay
+unchanged. The standalone BM25, dense, and RRF benchmark implementations are not modified.
+
 ## Offline regression coverage
 
 The tests use synthetic HTML and Markdown plus a deterministic fake embedder. They require no
@@ -65,6 +81,9 @@ Internet access, LlamaParse account, Hugging Face access, or GPU. The diagnostic
 - results contain no duplicate rows;
 - page, row source identity, parent chunk identity, and parent source lineage survive retrieval;
 - prose from a table-bearing chunk remains available for narrative questions.
+- sibling table rows cannot crowd every final context position;
+- deeper narrative candidates are promoted without changing their retrieval scores;
+- split table fragments are grouped by parent source lineage rather than fragment chunk ID.
 
 Run the focused checks with:
 

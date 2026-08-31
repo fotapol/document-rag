@@ -9,6 +9,7 @@ PDF upload
 -> canonical table-row retrieval units (narrative chunks remain available)
 -> in-memory BM25 + BGE dense indexes
 -> deterministic Reciprocal Rank Fusion
+-> parent-aware table-row diversity
 -> top five grounded context chunks
 -> pinned Qwen3-1.7B + pinned financial LoRA
 -> answer with page and chunk citations
@@ -27,6 +28,9 @@ single-session MVP rather than multi-user persistence.
 - `InMemoryHybridIndexFactory` composes the existing `BM25Retriever`, `DenseRetriever`,
   `SentenceTransformerEmbedder`, and `ReciprocalRankFusionRetriever` classes. Before indexing, it
   converts HTML and Markdown tables to canonical row children while preserving ordinary prose.
+- `ParentDiverseRetriever` inspects the deeper fused candidate pool and prevents rows from one
+  table source from filling the entire grounded context. It does not alter RRF scores or component
+  ranks.
 - `build_grounded_prompt` labels every context item with its page and deterministic chunk ID. Its
   system instruction requires context-only answers and an explicit unsupported-answer response.
 - `QwenLoraGenerator` lazily loads the pinned base model and attaches the published PEFT adapter
@@ -48,6 +52,7 @@ All settings are optional except `LLAMA_CLOUD_API_KEY` for real PDF parsing.
 | `DOCUMENT_RAG_TOP_K` | `5` |
 | `DOCUMENT_RAG_CANDIDATE_K` | `20` per retriever |
 | `DOCUMENT_RAG_RRF_K` | `60` |
+| `DOCUMENT_RAG_MAX_TABLE_ROWS_PER_PARENT` | `2` |
 | `DOCUMENT_RAG_EMBEDDING_MODEL_ID` | `BAAI/bge-small-en-v1.5` |
 | `DOCUMENT_RAG_EMBEDDING_MODEL_REVISION` | `5c38ec7c405ec4b44b94cc5a9bb96e735b38267a` |
 | `DOCUMENT_RAG_EMBEDDING_DEVICE` | `auto` |
@@ -60,7 +65,9 @@ All settings are optional except `LLAMA_CLOUD_API_KEY` for real PDF parsing.
 | `DOCUMENT_RAG_MAX_INPUT_TOKENS` | `4096` |
 | `DOCUMENT_RAG_MAX_NEW_TOKENS` | `128` |
 
-`DOCUMENT_RAG_CANDIDATE_K` must be at least `DOCUMENT_RAG_TOP_K`. The adapter is public, so a
+`DOCUMENT_RAG_CANDIDATE_K` must be at least `DOCUMENT_RAG_TOP_K` and is also the depth inspected
+by the diversity selector. `DOCUMENT_RAG_MAX_TABLE_ROWS_PER_PARENT` limits canonical rows from one
+logical table source in the final context; non-table chunks are not capped. The adapter is public, so a
 Hugging Face token is not required unless the repository visibility changes. Prompts exceeding
 `DOCUMENT_RAG_MAX_INPUT_TOKENS` fail explicitly instead of silently truncating the system
 instruction, evidence, or question; reduce `DOCUMENT_RAG_TOP_K` or raise the input limit when
