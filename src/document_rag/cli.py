@@ -42,7 +42,11 @@ from document_rag.retrieval.embeddings import (
 from document_rag.retrieval.evaluation import DEFAULT_K_VALUES
 from document_rag.retrieval.hybrid import DEFAULT_CANDIDATE_K, DEFAULT_RRF_K
 from document_rag.retrieval.hybrid_benchmark import run_hybrid_benchmark
-from document_rag.training import export_financial_qa_training_data
+from document_rag.training import (
+    RAGTrainingExportConfig,
+    export_financial_qa_training_data,
+    export_rag_training_data,
+)
 
 _DOCFINQA_PROGRESS_INTERVAL_SECONDS = 5.0
 
@@ -61,6 +65,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if arguments.command == "training" and arguments.training_command == "export":
         return _run_training_export(arguments)
+
+    if arguments.command == "training" and arguments.training_command == "export-rag":
+        return _run_rag_training_export(arguments)
 
     if arguments.command == "retrieval" and arguments.retrieval_command == "bm25":
         return _run_retrieval_bm25(arguments)
@@ -219,6 +226,57 @@ def _build_parser() -> argparse.ArgumentParser:
             "Split to export. May be specified more than once. "
             "All splits are exported when omitted."
         ),
+    )
+
+    rag_export_parser = training_commands.add_parser(
+        "export-rag",
+        help="Export production-shaped RAG chat data for adapter v2.",
+    )
+    rag_export_parser.add_argument(
+        "--finqa",
+        dest="finqa_directory",
+        type=Path,
+        required=True,
+        help="Directory containing prepared FinQA artifacts.",
+    )
+    rag_export_parser.add_argument(
+        "--docfinqa",
+        dest="docfinqa_directory",
+        type=Path,
+        required=True,
+        help="Directory containing prepared DocFinQA artifacts.",
+    )
+    rag_export_parser.add_argument(
+        "--output",
+        dest="output_directory",
+        type=Path,
+        required=True,
+        help="Directory for RAG-aligned JSONL and its manifest.",
+    )
+    rag_export_parser.add_argument(
+        "--split",
+        dest="splits",
+        action="append",
+        choices=tuple(split.value for split in DatasetSplit),
+        help="Split to export; repeat as needed. All splits are exported when omitted.",
+    )
+    rag_export_parser.add_argument(
+        "--refusal-ratio",
+        type=float,
+        default=0.2,
+        help="Target fraction of exact insufficient-context refusal examples (default: 0.2).",
+    )
+    rag_export_parser.add_argument(
+        "--oracle-augment",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Insert missing gold sources for supported generator supervision (default: enabled).",
+    )
+    rag_export_parser.add_argument(
+        "--document-resplit",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Assign source-report groups to deterministic 80/10/10 splits (default: enabled).",
     )
 
     retrieval_parser = commands.add_parser(
@@ -758,6 +816,48 @@ def _run_training_export(arguments: argparse.Namespace) -> int:
 
     for artifact in result.artifacts:
         print(f"  {artifact.split.value}: {artifact.record_count} examples -> {artifact.path}")
+
+    print(f"Manifest: {result.manifest_path}")
+    return 0
+
+
+def _run_rag_training_export(arguments: argparse.Namespace) -> int:
+    finqa_directory = cast(Path, arguments.finqa_directory)
+    docfinqa_directory = cast(Path, arguments.docfinqa_directory)
+    output_directory = cast(Path, arguments.output_directory)
+    split_values = cast(list[str] | None, arguments.splits)
+    refusal_ratio = cast(float, arguments.refusal_ratio)
+    oracle_augment = cast(bool, arguments.oracle_augment)
+    document_resplit = cast(bool, arguments.document_resplit)
+
+    try:
+        result = export_rag_training_data(
+            finqa_directory=finqa_directory,
+            docfinqa_directory=docfinqa_directory,
+            output_directory=output_directory,
+            splits=_parse_splits(split_values),
+            rag_config=RAGConfig.from_environment(),
+            export_config=RAGTrainingExportConfig(
+                refusal_ratio=refusal_ratio,
+                oracle_augment=oracle_augment,
+                document_resplit=document_resplit,
+            ),
+        )
+    except (OSError, ValueError, RAGError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+
+    print("Exported RAG-aligned adapter training data:")
+
+    for artifact in result.artifacts:
+        print(
+            f"  {artifact.split.value}: {artifact.record_count} examples "
+            f"({artifact.supported_count} supported, {artifact.refusal_count} refusals, "
+            f"{artifact.oracle_augmented_count} oracle augmented, "
+            f"{artifact.ambiguous_unit_exclusion_count} ambiguous-unit exclusions, "
+            f"{artifact.gold_source_overflow_exclusion_count} gold-source overflow exclusions) "
+            f"-> {artifact.path}"
+        )
 
     print(f"Manifest: {result.manifest_path}")
     return 0
