@@ -175,6 +175,34 @@ def test_real_factory_rejects_an_empty_document() -> None:
         factory.build(())
 
 
+def test_real_factory_ignores_units_without_lexical_tokens() -> None:
+    """Punctuation-only parser artifacts must not invalidate a useful report."""
+
+    searchable = _chunk("chunk:revenue", 1, "Revenue was $100.")
+    punctuation = _chunk("chunk:punctuation", 2, ".")
+    factory = InMemoryHybridIndexFactory(
+        RAGConfig(top_k=2, candidate_k=2),
+        embedder=FakeEmbedder(),
+    )
+
+    retriever = factory.build((searchable, punctuation))
+    results = retriever.search("revenue", top_k=2)
+
+    assert tuple(result.chunk_id for result in results) == (searchable.chunk_id,)
+
+
+def test_real_factory_rejects_a_document_without_searchable_tokens() -> None:
+    """A punctuation-only report should fail with an actionable error."""
+
+    factory = InMemoryHybridIndexFactory(
+        RAGConfig(top_k=1, candidate_k=1),
+        embedder=FakeEmbedder(),
+    )
+
+    with pytest.raises(RAGIndexingError, match="searchable lexical token"):
+        factory.build((_chunk("chunk:punctuation", 1, "."),))
+
+
 def test_real_factory_indexes_table_rows_instead_of_the_multirow_parent() -> None:
     """The RAG wiring should search canonical rows and retain parent recovery."""
 

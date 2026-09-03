@@ -12,7 +12,7 @@ from document_rag.rag.errors import RAGGenerationError, RAGIndexingError, RAGNot
 from document_rag.rag.generation import QwenLoraGenerator
 from document_rag.rag.models import GroundedPrompt, RAGAnswer
 from document_rag.rag.prompting import build_citations, build_grounded_prompt
-from document_rag.retrieval.bm25 import BM25Retriever, normalize_bm25_query
+from document_rag.retrieval.bm25 import BM25Retriever, lexical_tokenize, normalize_bm25_query
 from document_rag.retrieval.dense import DenseEmbedder, DenseRetriever
 from document_rag.retrieval.diversity import ParentDiverseRetriever
 from document_rag.retrieval.embeddings import SentenceTransformerEmbedder
@@ -60,13 +60,20 @@ class InMemoryHybridIndexFactory:
         try:
             embedder = self._get_embedder()
             corpus = build_table_retrieval_corpus(chunks)
+            searchable_units = tuple(unit for unit in corpus.units if lexical_tokenize(unit.text))
+
+            if not searchable_units:
+                raise RAGIndexingError(
+                    "The document must contain at least one searchable lexical token."
+                )
+
             lexical_retriever = BM25Retriever(
-                corpus.units,
+                searchable_units,
                 variant="plus",
                 query_tokenizer=normalize_bm25_query,
             )
             semantic_retriever = DenseRetriever(
-                corpus.units,
+                searchable_units,
                 embedder=embedder,
                 batch_size=self._config.dense_batch_size,
             )

@@ -69,6 +69,11 @@ Base-model and financial-LoRA generation can be compared on identical frozen
 retrieval contexts using the procedure in
 [`docs/RAG_EVALUATION.md`](docs/RAG_EVALUATION.md).
 
+Production-shaped FinQA and DocFinQA chat data for a RAG-aligned adapter can be
+prepared locally using the deterministic, lineage-validated procedure in
+[`docs/RAG_ADAPTER_DATA.md`](docs/RAG_ADAPTER_DATA.md). Kaggle is used only for
+the subsequent GPU training run.
+
 ## Project Structure
 ```
 document-rag/
