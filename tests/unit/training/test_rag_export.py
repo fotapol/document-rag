@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -28,10 +29,32 @@ from document_rag.rag.config import RAGConfig
 from document_rag.rag.prompting import SYSTEM_INSTRUCTION, UNSUPPORTED_ANSWER
 from document_rag.retrieval.models import RetrievalResult
 from document_rag.training.rag_export import (
+    HuggingFaceTrainingTokenCounter,
     RAGTrainingExportConfig,
     _assigned_document_split,
     export_rag_training_data,
 )
+
+
+@dataclass(frozen=True)
+class _FakeTokenCounter:
+    """Count characters deterministically without loading a tokenizer."""
+
+    def count(self, messages: Sequence[Mapping[str, str]]) -> int:
+        return sum(len(message["content"]) for message in messages)
+
+
+@dataclass(frozen=True)
+class _SourceTokenCounter:
+    """Treat each rendered source or citation label as one synthetic token."""
+
+    overflow_phrase: str | None = None
+
+    def count(self, messages: Sequence[Mapping[str, str]]) -> int:
+        if self.overflow_phrase is not None and self.overflow_phrase in messages[1]["content"]:
+            return 4
+
+        return sum(message["content"].count("[Source ") for message in messages)
 
 
 @dataclass(frozen=True)
@@ -76,6 +99,7 @@ def test_export_builds_supported_oracle_and_refusal_examples(tmp_path: Path) -> 
             document_resplit=False,
         ),
         retriever_factory=_FakeFactory(),
+        token_counter=_FakeTokenCounter(),
     )
 
     artifact = result.artifacts[0]
@@ -122,13 +146,22 @@ def test_export_builds_supported_oracle_and_refusal_examples(tmp_path: Path) -> 
     assert "high-ranking distractor" in refusal["messages"][1]["content"].casefold()
 
     manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
-    assert manifest["schema_version"] == 3
+    assert manifest["schema_version"] == 4
     assert manifest["policies"]["reasoning_supervision"] == (
         "visible_normalized_calculation_program_then_final_answer"
     )
     assert manifest["policies"]["unsupported_target"] == UNSUPPORTED_ANSWER
     assert manifest["retrieval"]["top_k"] == 1
     assert manifest["artifacts"]["train"]["calculation_supervised_count"] == 1
+    assert manifest["artifacts"]["train"]["context_trimmed_count"] == 0
+    assert manifest["artifacts"]["train"]["sequence_overflow_exclusion_count"] == 0
+    assert manifest["tokenization"] == {
+        "add_generation_prompt": False,
+        "enable_thinking": False,
+        "max_sequence_tokens": 4096,
+        "model_id": "Qwen/Qwen3-1.7B",
+        "model_revision": "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e",
+    }
     assert manifest["artifacts"]["train"]["category_counts"] == {
         "reasoning": 1,
         "simple_lookup": 2,
@@ -159,6 +192,7 @@ def test_rag_export_is_deterministic(tmp_path: Path) -> None:
         rag_config=rag_config,
         export_config=export_config,
         retriever_factory=_FakeFactory(),
+        token_counter=_FakeTokenCounter(),
     )
     second = export_rag_training_data(
         finqa_directory=finqa,
@@ -168,6 +202,7 @@ def test_rag_export_is_deterministic(tmp_path: Path) -> None:
         rag_config=rag_config,
         export_config=export_config,
         retriever_factory=_FakeFactory(),
+        token_counter=_FakeTokenCounter(),
     )
 
     assert first.artifacts[0].sha256 == second.artifacts[0].sha256
@@ -219,6 +254,7 @@ def test_source_report_groups_cannot_cross_splits(tmp_path: Path) -> None:
             rag_config=RAGConfig(top_k=1, candidate_k=1),
             export_config=RAGTrainingExportConfig(document_resplit=False),
             retriever_factory=_FakeFactory(),
+            token_counter=_FakeTokenCounter(),
         )
 
 
@@ -233,12 +269,96 @@ def test_document_resplit_is_deterministic_and_uses_all_output_splits() -> None:
     assert set(first) == set(DatasetSplit)
 
 
+def test_export_trims_only_non_gold_context_to_fit_sequence_budget(tmp_path: Path) -> None:
+    """Oversized context should lose a low-ranked distractor, never its gold row."""
+
+    finqa, docfinqa = _write_training_fixtures(tmp_path)
+    result = export_rag_training_data(
+        finqa_directory=finqa,
+        docfinqa_directory=docfinqa,
+        output_directory=tmp_path / "output",
+        splits=(DatasetSplit.TRAIN,),
+        rag_config=RAGConfig(top_k=2, candidate_k=2),
+        export_config=RAGTrainingExportConfig(
+            refusal_ratio=0.2,
+            document_resplit=False,
+            max_sequence_tokens=3,
+        ),
+        retriever_factory=_FakeFactory(),
+        token_counter=_SourceTokenCounter(),
+    )
+
+    records = _read_jsonl(result.artifacts[0].path)
+    calculation = _record(records, "finqa:calculation:supported")
+
+    assert calculation["context_trimmed"] is True
+    assert calculation["sequence_token_count"] == 3
+    assert calculation["gold_source_element_ids"] == ["finqa:calculation:gold"]
+    assert calculation["gold_source_numbers"] == [1]
+    assert len(calculation["source_chunk_ids"]) == 1
+    assert "high-ranking distractor" not in calculation["messages"][1]["content"].casefold()
+    assert result.artifacts[0].context_trimmed_count == 1
+    assert result.artifacts[0].sequence_overflow_exclusion_count == 0
+
+
+def test_export_audits_gold_only_sequence_overflow(tmp_path: Path) -> None:
+    """A gold context that cannot fit must be counted instead of silently filtered later."""
+
+    finqa, docfinqa = _write_training_fixtures(tmp_path)
+    result = export_rag_training_data(
+        finqa_directory=finqa,
+        docfinqa_directory=docfinqa,
+        output_directory=tmp_path / "output",
+        splits=(DatasetSplit.TRAIN,),
+        rag_config=RAGConfig(top_k=1, candidate_k=2),
+        export_config=RAGTrainingExportConfig(
+            refusal_ratio=0.2,
+            document_resplit=False,
+            max_sequence_tokens=3,
+        ),
+        retriever_factory=_FakeFactory(),
+        token_counter=_SourceTokenCounter(overflow_phrase="Gross margin"),
+    )
+
+    records = _read_jsonl(result.artifacts[0].path)
+
+    assert not any(record["example_id"] == "finqa:percentage:supported" for record in records)
+    assert result.artifacts[0].sequence_overflow_exclusion_count == 1
+    assert result.artifacts[0].max_sequence_token_count <= 3
+
+
+def test_hugging_face_counter_uses_training_chat_template() -> None:
+    """Token counting must match the non-thinking, target-inclusive Kaggle sequence."""
+
+    class _FakeTokenizer:
+        def apply_chat_template(self, messages: object, **options: object) -> tuple[int, ...]:
+            assert messages == [{"role": "assistant", "content": "answer"}]
+            assert options == {
+                "tokenize": True,
+                "add_generation_prompt": False,
+                "enable_thinking": False,
+                "return_dict": False,
+            }
+            return (1, 2, 3)
+
+    counter = HuggingFaceTrainingTokenCounter(tokenizer=_FakeTokenizer())
+
+    assert counter.count(({"role": "assistant", "content": "answer"},)) == 3
+
+
 @pytest.mark.parametrize("ratio", [-0.1, 0.5, 1.0])
 def test_refusal_ratio_is_bounded(ratio: float) -> None:
     """Refusal supervision must remain a minority of generated records."""
 
     with pytest.raises(ValueError, match="refusal_ratio"):
         RAGTrainingExportConfig(refusal_ratio=ratio)
+
+
+def test_max_sequence_tokens_must_be_positive() -> None:
+    """The exporter cannot enforce an empty or negative sequence budget."""
+
+    with pytest.raises(ValueError, match="max_sequence_tokens"):
+        RAGTrainingExportConfig(max_sequence_tokens=0)
 
 
 def _write_training_fixtures(tmp_path: Path) -> tuple[Path, Path]:

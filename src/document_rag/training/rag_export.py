@@ -10,20 +10,20 @@ from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
-from typing import Any, Literal, cast
+from typing import Any, Literal, Protocol, cast
 
 from pydantic import BaseModel, ValidationError
 
 from document_rag.datasets.models import DatasetExample, DatasetName, DatasetSplit
 from document_rag.domain.documents import Document, DocumentElement, DocumentElementType
 from document_rag.ingestion.chunking import DocumentChunk, RegexTokenCounter
-from document_rag.rag.config import RAGConfig
+from document_rag.rag.config import DEFAULT_MAX_INPUT_TOKENS, RAGConfig
 from document_rag.rag.prompting import SYSTEM_INSTRUCTION, UNSUPPORTED_ANSWER, build_grounded_prompt
 from document_rag.rag.service import InMemoryHybridIndexFactory, RetrieverFactory
 from document_rag.retrieval.benchmark import write_bytes_atomically
 from document_rag.retrieval.models import RetrievalResult
 
-RAG_TRAINING_SCHEMA_VERSION = 3
+RAG_TRAINING_SCHEMA_VERSION = 4
 DEFAULT_REFUSAL_RATIO = 0.2
 type RAGTrainingCategory = Literal[
     "simple_lookup",
@@ -51,6 +51,50 @@ _EXPLICIT_UNIT_PATTERN = re.compile(
 _ADDITIVE_PROGRAM_PATTERN = re.compile(r"^\s*(?:add|subtract)\s*\(", re.IGNORECASE)
 
 
+class TrainingTokenCounter(Protocol):
+    """Count a complete chat sequence as it will be tokenized for training."""
+
+    def count(self, messages: Sequence[Mapping[str, str]]) -> int:
+        """Return the number of tokens in system, user, and assistant messages."""
+
+
+@dataclass(frozen=True, slots=True)
+class HuggingFaceTrainingTokenCounter:
+    """Apply the pinned Qwen chat template before counting training tokens."""
+
+    tokenizer: Any
+
+    @classmethod
+    def from_pretrained(cls, *, model_id: str, revision: str) -> HuggingFaceTrainingTokenCounter:
+        """Load the exact tokenizer used by the configured base-model revision."""
+
+        try:
+            from transformers import AutoTokenizer
+
+            tokenizer = AutoTokenizer.from_pretrained(model_id, revision=revision)
+        except Exception as exc:
+            raise ValueError(
+                f"Could not load the pinned training tokenizer {model_id}@{revision}."
+            ) from exc
+
+        return cls(tokenizer=tokenizer)
+
+    def count(self, messages: Sequence[Mapping[str, str]]) -> int:
+        """Count the full non-thinking training conversation including its target."""
+
+        token_ids = cast(
+            Sequence[int],
+            self.tokenizer.apply_chat_template(
+                [dict(message) for message in messages],
+                tokenize=True,
+                add_generation_prompt=False,
+                enable_thinking=False,
+                return_dict=False,
+            ),
+        )
+        return len(token_ids)
+
+
 @dataclass(frozen=True, slots=True)
 class RAGTrainingExportConfig:
     """Policies that shape supported and unsupported training examples."""
@@ -58,12 +102,16 @@ class RAGTrainingExportConfig:
     refusal_ratio: float = DEFAULT_REFUSAL_RATIO
     oracle_augment: bool = True
     document_resplit: bool = True
+    max_sequence_tokens: int = DEFAULT_MAX_INPUT_TOKENS
 
     def __post_init__(self) -> None:
         """Reject ratios that would overwhelm supported-answer supervision."""
 
         if not 0.0 <= self.refusal_ratio < 0.5:
             raise ValueError("refusal_ratio must be greater than or equal to 0 and below 0.5.")
+
+        if self.max_sequence_tokens <= 0:
+            raise ValueError("max_sequence_tokens must be positive.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,9 +124,12 @@ class RAGTrainingArtifact:
     supported_count: int
     refusal_count: int
     calculation_supervised_count: int
+    context_trimmed_count: int
     oracle_augmented_count: int
     ambiguous_unit_exclusion_count: int
     gold_source_overflow_exclusion_count: int
+    sequence_overflow_exclusion_count: int
+    max_sequence_token_count: int
     sha256: str
 
 
@@ -116,6 +167,7 @@ def export_rag_training_data(
     rag_config: RAGConfig | None = None,
     export_config: RAGTrainingExportConfig | None = None,
     retriever_factory: RetrieverFactory | None = None,
+    token_counter: TrainingTokenCounter | None = None,
 ) -> RAGTrainingExportResult:
     """Export source-grounded chat records using the production prompt and retrieval shape."""
 
@@ -145,6 +197,11 @@ def export_rag_training_data(
     if not resolved_export_config.document_resplit:
         _validate_document_group_isolation(loaded_splits)
 
+    resolved_token_counter = token_counter or HuggingFaceTrainingTokenCounter.from_pretrained(
+        model_id=resolved_rag_config.base_model_id,
+        revision=resolved_rag_config.base_model_revision,
+    )
+
     output_root = output_directory.resolve()
     output_root.mkdir(parents=True, exist_ok=True)
     artifacts: list[RAGTrainingArtifact] = []
@@ -152,17 +209,25 @@ def export_rag_training_data(
     all_records: list[dict[str, object]] = []
     ambiguous_exclusion_groups: list[str] = []
     gold_overflow_exclusion_groups: list[str] = []
+    sequence_overflow_exclusion_groups: list[str] = []
 
     for loaded in loaded_splits:
-        dataset_records, dataset_ambiguous_groups, dataset_overflow_groups = _build_split_records(
+        (
+            dataset_records,
+            dataset_ambiguous_groups,
+            dataset_gold_overflow_groups,
+            dataset_sequence_overflow_groups,
+        ) = _build_split_records(
             loaded,
             rag_config=resolved_rag_config,
             export_config=resolved_export_config,
             retriever_factory=resolved_retriever_factory,
+            token_counter=resolved_token_counter,
         )
         all_records.extend(dataset_records)
         ambiguous_exclusion_groups.extend(dataset_ambiguous_groups)
-        gold_overflow_exclusion_groups.extend(dataset_overflow_groups)
+        gold_overflow_exclusion_groups.extend(dataset_gold_overflow_groups)
+        sequence_overflow_exclusion_groups.extend(dataset_sequence_overflow_groups)
 
     if resolved_export_config.document_resplit:
         all_records = [
@@ -180,6 +245,7 @@ def export_rag_training_data(
         calculation_supervised_count = sum(
             cast(bool, record["calculation_supervised"]) for record in records
         )
+        context_trimmed_count = sum(cast(bool, record["context_trimmed"]) for record in records)
         oracle_augmented_count = sum(
             record["context_mode"] == "oracle_augmented" for record in records
         )
@@ -199,6 +265,18 @@ def export_rag_training_data(
             )
             for group_id in gold_overflow_exclusion_groups
         )
+        sequence_overflow_exclusion_count = sum(
+            (
+                _assigned_document_split(group_id) is split
+                if resolved_export_config.document_resplit
+                else group_id.startswith(f"{split.value}:")
+            )
+            for group_id in sequence_overflow_exclusion_groups
+        )
+        max_sequence_token_count = max(
+            (cast(int, record["sequence_token_count"]) for record in records),
+            default=0,
+        )
 
         records.sort(
             key=lambda record: (
@@ -206,7 +284,11 @@ def export_rag_training_data(
                 cast(str, record["example_id"]),
             )
         )
-        _validate_records(records, split=split)
+        _validate_records(
+            records,
+            split=split,
+            max_sequence_tokens=resolved_export_config.max_sequence_tokens,
+        )
         artifact_distributions[split] = {
             "category_counts": _count_record_field(records, "category"),
             "context_mode_counts": _count_record_field(records, "context_mode"),
@@ -227,9 +309,12 @@ def export_rag_training_data(
                 supported_count=supported_count,
                 refusal_count=refusal_count,
                 calculation_supervised_count=calculation_supervised_count,
+                context_trimmed_count=context_trimmed_count,
                 oracle_augmented_count=oracle_augmented_count,
                 ambiguous_unit_exclusion_count=ambiguous_unit_exclusion_count,
                 gold_source_overflow_exclusion_count=(gold_source_overflow_exclusion_count),
+                sequence_overflow_exclusion_count=sequence_overflow_exclusion_count,
+                max_sequence_token_count=max_sequence_token_count,
                 sha256=sha256(content).hexdigest(),
             )
         )
@@ -239,14 +324,17 @@ def export_rag_training_data(
             artifact.split.value: {
                 "ambiguous_unit_exclusion_count": artifact.ambiguous_unit_exclusion_count,
                 "calculation_supervised_count": artifact.calculation_supervised_count,
+                "context_trimmed_count": artifact.context_trimmed_count,
                 "oracle_augmented_count": artifact.oracle_augmented_count,
                 "gold_source_overflow_exclusion_count": (
                     artifact.gold_source_overflow_exclusion_count
                 ),
+                "max_sequence_token_count": artifact.max_sequence_token_count,
                 "path": artifact.path.relative_to(output_root).as_posix(),
                 "record_count": artifact.record_count,
                 "refusal_count": artifact.refusal_count,
                 "sha256": artifact.sha256,
+                "sequence_overflow_exclusion_count": (artifact.sequence_overflow_exclusion_count),
                 "supported_count": artifact.supported_count,
                 **artifact_distributions[artifact.split],
             }
@@ -269,7 +357,15 @@ def export_rag_training_data(
             "oracle_augment": resolved_export_config.oracle_augment,
             "reasoning_supervision": ("visible_normalized_calculation_program_then_final_answer"),
             "refusal_ratio": resolved_export_config.refusal_ratio,
+            "sequence_budget": "drop_lowest_ranked_non_gold_then_exclude",
             "unsupported_target": UNSUPPORTED_ANSWER,
+        },
+        "tokenization": {
+            "add_generation_prompt": False,
+            "enable_thinking": False,
+            "max_sequence_tokens": resolved_export_config.max_sequence_tokens,
+            "model_id": resolved_rag_config.base_model_id,
+            "model_revision": resolved_rag_config.base_model_revision,
         },
         "retrieval": {
             "candidate_k": resolved_rag_config.candidate_k,
@@ -307,7 +403,13 @@ def _build_split_records(
     rag_config: RAGConfig,
     export_config: RAGTrainingExportConfig,
     retriever_factory: RetrieverFactory,
-) -> tuple[list[dict[str, object]], tuple[str, ...], tuple[str, ...]]:
+    token_counter: TrainingTokenCounter,
+) -> tuple[
+    list[dict[str, object]],
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+]:
     documents_by_id = {document.document_id: document for document in loaded.documents}
     elements_by_document: dict[str, list[DocumentElement]] = defaultdict(list)
     examples_by_document: dict[str, list[DatasetExample]] = defaultdict(list)
@@ -322,6 +424,7 @@ def _build_split_records(
     negative_candidates: list[dict[str, object]] = []
     ambiguous_exclusion_groups: list[str] = []
     gold_overflow_exclusion_groups: list[str] = []
+    sequence_overflow_exclusion_groups: list[str] = []
     supported_count = 0
 
     for document_id in sorted(examples_by_document):
@@ -342,13 +445,25 @@ def _build_split_records(
             context_mode: RAGTrainingContextMode = "retrieved"
 
             if len(set(gold_ids)) > rag_config.top_k:
-                negative = _build_refusal_record(
+                negative, negative_overflowed = _build_refusal_record(
                     loaded=loaded,
                     document=document,
                     example=example,
                     results=production_results,
                     mode="retrieval_insufficient",
+                    max_sequence_tokens=export_config.max_sequence_tokens,
+                    token_counter=token_counter,
                 )
+
+                if negative_overflowed:
+                    sequence_overflow_exclusion_groups.append(
+                        _split_aware_group_id(
+                            document,
+                            example,
+                            loaded=loaded,
+                            document_resplit=export_config.document_resplit,
+                        )
+                    )
 
                 if negative is not None:
                     negative_candidates.append(negative)
@@ -362,13 +477,25 @@ def _build_split_records(
                 continue
 
             if not _contains_all_gold(production_results, gold_ids):
-                negative = _build_refusal_record(
+                negative, negative_overflowed = _build_refusal_record(
                     loaded=loaded,
                     document=document,
                     example=example,
                     results=production_results,
                     mode="retrieval_insufficient",
+                    max_sequence_tokens=export_config.max_sequence_tokens,
+                    token_counter=token_counter,
                 )
+
+                if negative_overflowed:
+                    sequence_overflow_exclusion_groups.append(
+                        _split_aware_group_id(
+                            document,
+                            example,
+                            loaded=loaded,
+                            document_resplit=export_config.document_resplit,
+                        )
+                    )
 
                 if negative is not None:
                     negative_candidates.append(negative)
@@ -390,13 +517,25 @@ def _build_split_records(
                     gold_ids=gold_ids,
                     top_k=rag_config.top_k,
                 )
-                negative = _build_refusal_record(
+                negative, negative_overflowed = _build_refusal_record(
                     loaded=loaded,
                     document=document,
                     example=example,
                     results=negative_results,
                     mode="retrieval_insufficient",
+                    max_sequence_tokens=export_config.max_sequence_tokens,
+                    token_counter=token_counter,
                 )
+
+                if negative_overflowed:
+                    sequence_overflow_exclusion_groups.append(
+                        _split_aware_group_id(
+                            document,
+                            example,
+                            loaded=loaded,
+                            document_resplit=export_config.document_resplit,
+                        )
+                    )
 
                 if negative is not None:
                     negative_candidates.append(negative)
@@ -416,17 +555,30 @@ def _build_split_records(
                 )
                 continue
 
-            records.append(
-                _build_supported_record(
-                    loaded=loaded,
-                    document=document,
-                    example=example,
-                    results=supported_results,
-                    context_mode=context_mode,
-                    grounded_answer=grounded_answer,
-                    gold_ids=gold_ids,
-                )
+            supported_record = _fit_supported_record(
+                loaded=loaded,
+                document=document,
+                example=example,
+                results=supported_results,
+                context_mode=context_mode,
+                grounded_answer=grounded_answer,
+                gold_ids=gold_ids,
+                max_sequence_tokens=export_config.max_sequence_tokens,
+                token_counter=token_counter,
             )
+
+            if supported_record is None:
+                sequence_overflow_exclusion_groups.append(
+                    _split_aware_group_id(
+                        document,
+                        example,
+                        loaded=loaded,
+                        document_resplit=export_config.document_resplit,
+                    )
+                )
+                continue
+
+            records.append(supported_record)
             supported_count += 1
 
     refusal_target = _refusal_target(
@@ -447,6 +599,7 @@ def _build_split_records(
         records,
         tuple(ambiguous_exclusion_groups),
         tuple(gold_overflow_exclusion_groups),
+        tuple(sequence_overflow_exclusion_groups),
     )
 
 
@@ -486,6 +639,73 @@ def _build_supported_record(
     }
 
 
+def _fit_supported_record(
+    *,
+    loaded: _LoadedSplit,
+    document: Document,
+    example: DatasetExample,
+    results: tuple[RetrievalResult, ...],
+    context_mode: RAGTrainingContextMode,
+    grounded_answer: _GroundedAnswer,
+    gold_ids: tuple[str, ...],
+    max_sequence_tokens: int,
+    token_counter: TrainingTokenCounter,
+) -> dict[str, object] | None:
+    """Fit a supported record by removing only lowest-ranked non-gold context."""
+
+    original_result_count = len(results)
+    selected_results = results
+    selected_answer = grounded_answer
+    gold = set(gold_ids)
+
+    while selected_results:
+        record = _build_supported_record(
+            loaded=loaded,
+            document=document,
+            example=example,
+            results=selected_results,
+            context_mode=context_mode,
+            grounded_answer=selected_answer,
+            gold_ids=gold_ids,
+        )
+        token_count = _record_token_count(record, token_counter=token_counter)
+
+        if token_count <= max_sequence_tokens:
+            record["context_trimmed"] = len(selected_results) < original_result_count
+            record["sequence_token_count"] = token_count
+            return record
+
+        removable_index = next(
+            (
+                index
+                for index in range(len(selected_results) - 1, -1, -1)
+                if not (set(selected_results[index].chunk.source_element_ids) & gold)
+            ),
+            None,
+        )
+
+        if removable_index is None:
+            return None
+
+        selected_results = _rerank(
+            result for index, result in enumerate(selected_results) if index != removable_index
+        )
+        rebuilt_answer = _build_grounded_answer(
+            example,
+            results=selected_results,
+            gold_ids=gold_ids,
+        )
+
+        if rebuilt_answer is None:
+            raise ValueError(
+                f"Token trimming changed unit interpretation for {example.example_id!r}."
+            )
+
+        selected_answer = rebuilt_answer
+
+    return None
+
+
 def _build_refusal_record(
     *,
     loaded: _LoadedSplit,
@@ -493,34 +713,59 @@ def _build_refusal_record(
     example: DatasetExample,
     results: tuple[RetrievalResult, ...],
     mode: Literal["retrieval_insufficient"],
-) -> dict[str, object] | None:
+    max_sequence_tokens: int,
+    token_counter: TrainingTokenCounter,
+) -> tuple[dict[str, object] | None, bool]:
     if not results or _context_contains_answer(results, example.reference_answer.text):
-        return None
+        return None, False
 
-    prompt = build_grounded_prompt(question=example.question.text, results=results)
-    return {
-        "answerable": False,
-        "calculation_supervised": False,
-        "category": "unsupported",
-        "context_mode": mode,
-        "dataset": loaded.dataset.value,
-        "document_group_id": _document_group_id(document, example),
-        "document_id": document.document_id,
-        "example_id": f"{example.example_id}:unsupported",
-        "expected_units": [],
-        "expected_values": [],
-        "gold_source_element_ids": [],
-        "gold_source_numbers": [],
-        "messages": [
-            *prompt.to_messages(),
-            {"role": "assistant", "content": UNSUPPORTED_ANSWER},
-        ],
-        "reasoning_program": None,
-        "source_chunk_ids": [result.chunk_id for result in results],
-        "source_split": loaded.split.value,
-        "split": loaded.split.value,
-        "unit_status": "not_applicable",
-    }
+    original_result_count = len(results)
+    selected_results = results
+
+    while selected_results:
+        prompt = build_grounded_prompt(question=example.question.text, results=selected_results)
+        record: dict[str, object] = {
+            "answerable": False,
+            "calculation_supervised": False,
+            "category": "unsupported",
+            "context_mode": mode,
+            "dataset": loaded.dataset.value,
+            "document_group_id": _document_group_id(document, example),
+            "document_id": document.document_id,
+            "example_id": f"{example.example_id}:unsupported",
+            "expected_units": [],
+            "expected_values": [],
+            "gold_source_element_ids": [],
+            "gold_source_numbers": [],
+            "messages": [
+                *prompt.to_messages(),
+                {"role": "assistant", "content": UNSUPPORTED_ANSWER},
+            ],
+            "reasoning_program": None,
+            "source_chunk_ids": [result.chunk_id for result in selected_results],
+            "source_split": loaded.split.value,
+            "split": loaded.split.value,
+            "unit_status": "not_applicable",
+        }
+        token_count = _record_token_count(record, token_counter=token_counter)
+
+        if token_count <= max_sequence_tokens:
+            record["context_trimmed"] = len(selected_results) < original_result_count
+            record["sequence_token_count"] = token_count
+            return record, False
+
+        selected_results = _rerank(selected_results[:-1])
+
+    return None, True
+
+
+def _record_token_count(
+    record: Mapping[str, object],
+    *,
+    token_counter: TrainingTokenCounter,
+) -> int:
+    messages = cast(list[dict[str, str]], record["messages"])
+    return token_counter.count(messages)
 
 
 def _build_grounded_answer(
@@ -1043,6 +1288,19 @@ def _document_group_id(document: Document, example: DatasetExample) -> str:
     return f"source-group:{_stable_digest(normalized)}"
 
 
+def _split_aware_group_id(
+    document: Document,
+    example: DatasetExample,
+    *,
+    loaded: _LoadedSplit,
+    document_resplit: bool,
+) -> str:
+    """Retain the source split only when report-level reassignment is disabled."""
+
+    group_id = _document_group_id(document, example)
+    return group_id if document_resplit else f"{loaded.split.value}:{group_id}"
+
+
 def _assigned_document_split(document_group_id: str) -> DatasetSplit:
     bucket = int(sha256(document_group_id.encode("utf-8")).hexdigest()[:8], 16) % 100
 
@@ -1055,7 +1313,12 @@ def _assigned_document_split(document_group_id: str) -> DatasetSplit:
     return DatasetSplit.TEST
 
 
-def _validate_records(records: list[dict[str, object]], *, split: DatasetSplit) -> None:
+def _validate_records(
+    records: list[dict[str, object]],
+    *,
+    split: DatasetSplit,
+    max_sequence_tokens: int,
+) -> None:
     if not records:
         raise ValueError(f"Cannot export an empty RAG training split: {split.value}.")
 
@@ -1066,6 +1329,20 @@ def _validate_records(records: list[dict[str, object]], *, split: DatasetSplit) 
 
     for record in records:
         messages = cast(list[dict[str, str]], record["messages"])
+        sequence_token_count = record.get("sequence_token_count")
+
+        if (
+            type(sequence_token_count) is not int
+            or sequence_token_count <= 0
+            or sequence_token_count > max_sequence_tokens
+        ):
+            raise ValueError(
+                f"Invalid sequence token count for {record['example_id']!r}: "
+                f"{sequence_token_count!r}."
+            )
+
+        if type(record.get("context_trimmed")) is not bool:
+            raise ValueError(f"Missing context-trim audit flag for {record['example_id']!r}.")
 
         if [message["role"] for message in messages] != ["system", "user", "assistant"]:
             raise ValueError(f"Invalid message roles for {record['example_id']!r}.")

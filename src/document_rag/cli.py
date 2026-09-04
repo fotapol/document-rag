@@ -28,7 +28,7 @@ from document_rag.datasets.docfinqa.writer import WrittenDocFinQASplit
 from document_rag.datasets.finqa import prepare_finqa_dataset
 from document_rag.datasets.finqa.writer import WrittenFinQASplit
 from document_rag.datasets.models import DatasetName, DatasetSplit
-from document_rag.rag.config import RAGConfig
+from document_rag.rag.config import DEFAULT_MAX_INPUT_TOKENS, RAGConfig
 from document_rag.rag.errors import RAGError
 from document_rag.rag.evaluation import run_frozen_rag_evaluation
 from document_rag.rag.generation import QwenBaseLoraComparisonGenerator
@@ -230,7 +230,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     rag_export_parser = training_commands.add_parser(
         "export-rag",
-        help="Export production-shaped RAG chat data for adapter v2.",
+        help="Export production-shaped RAG chat data for the next adapter.",
     )
     rag_export_parser.add_argument(
         "--finqa",
@@ -277,6 +277,15 @@ def _build_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Assign source-report groups to deterministic 80/10/10 splits (default: enabled).",
+    )
+    rag_export_parser.add_argument(
+        "--max-sequence-tokens",
+        type=int,
+        default=DEFAULT_MAX_INPUT_TOKENS,
+        help=(
+            "Maximum tokens in the complete templated training sequence, including the target. "
+            f"Default: {DEFAULT_MAX_INPUT_TOKENS}."
+        ),
     )
 
     retrieval_parser = commands.add_parser(
@@ -829,6 +838,7 @@ def _run_rag_training_export(arguments: argparse.Namespace) -> int:
     refusal_ratio = cast(float, arguments.refusal_ratio)
     oracle_augment = cast(bool, arguments.oracle_augment)
     document_resplit = cast(bool, arguments.document_resplit)
+    max_sequence_tokens = cast(int, arguments.max_sequence_tokens)
 
     try:
         result = export_rag_training_data(
@@ -841,6 +851,7 @@ def _run_rag_training_export(arguments: argparse.Namespace) -> int:
                 refusal_ratio=refusal_ratio,
                 oracle_augment=oracle_augment,
                 document_resplit=document_resplit,
+                max_sequence_tokens=max_sequence_tokens,
             ),
         )
     except (OSError, ValueError, RAGError) as error:
@@ -853,9 +864,13 @@ def _run_rag_training_export(arguments: argparse.Namespace) -> int:
         print(
             f"  {artifact.split.value}: {artifact.record_count} examples "
             f"({artifact.supported_count} supported, {artifact.refusal_count} refusals, "
+            f"{artifact.calculation_supervised_count} calculation supervised, "
+            f"{artifact.context_trimmed_count} context trimmed, "
             f"{artifact.oracle_augmented_count} oracle augmented, "
             f"{artifact.ambiguous_unit_exclusion_count} ambiguous-unit exclusions, "
-            f"{artifact.gold_source_overflow_exclusion_count} gold-source overflow exclusions) "
+            f"{artifact.gold_source_overflow_exclusion_count} gold-source overflow exclusions, "
+            f"{artifact.sequence_overflow_exclusion_count} sequence overflow exclusions, "
+            f"max {artifact.max_sequence_token_count} tokens) "
             f"-> {artifact.path}"
         )
 
