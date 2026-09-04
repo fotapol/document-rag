@@ -68,8 +68,8 @@ def test_assessment_separates_numeric_units_and_citations() -> None:
     assert scalar_only.overall_pass is False
 
 
-def test_assessment_finds_expected_result_anywhere_in_reasoning() -> None:
-    """Evaluation must not repeat the old first-number scoring bias."""
+def test_assessment_scores_trailing_result_after_reasoning_operands() -> None:
+    """A trailing result remains scoreable after its calculation operands."""
 
     assessment = assess_answer(
         "Revenue rose from $12.4 million to $14.1 million, an increase of $1.7 million [Source 1].",
@@ -84,6 +84,89 @@ def test_assessment_finds_expected_result_anywhere_in_reasoning() -> None:
 
     assert assessment.numeric_correct is True
     assert assessment.overall_pass is True
+
+
+@pytest.mark.parametrize(
+    ("expected", "answer"),
+    [
+        ("53.8", "The answer is -53.8%. [Source 1]"),
+        ("9.9", "The answer is 99.9%. [Source 1]"),
+        ("4", "The answer is 44%. [Source 1]"),
+        ("71", "The answer is 171 million. [Source 1]"),
+    ],
+)
+def test_assessment_rejects_wrong_signed_or_partial_numeric_matches(
+    expected: str,
+    answer: str,
+) -> None:
+    """Signs and complete decimal values are part of numeric correctness."""
+
+    assessment = assess_answer(
+        answer,
+        expectation=RAGCaseExpectation(
+            answerable=True,
+            expected_values=(expected,),
+            required_source_numbers=(1,),
+        ),
+        context_count=1,
+    )
+
+    assert assessment.numeric_correct is False
+    assert assessment.content_correct is False
+    assert assessment.overall_pass is False
+
+
+def test_explicit_final_answer_cannot_be_satisfied_by_an_operand() -> None:
+    """A cited input value must not hide a wrong explicitly stated result."""
+
+    assessment = assess_answer(
+        "The inputs are $7 million and $17 million. The answer is $24 million [Source 1].",
+        expectation=RAGCaseExpectation(
+            answerable=True,
+            expected_values=("7",),
+            expected_units=("$", "million"),
+            required_source_numbers=(1,),
+        ),
+        context_count=1,
+    )
+
+    assert assessment.numeric_correct is False
+    assert assessment.overall_pass is False
+
+
+def test_leading_decimal_answer_is_scored_as_a_decimal() -> None:
+    """Benchmark values such as .1 must not be parsed as the integer one."""
+
+    assessment = assess_answer(
+        "The answer is 0.1%. [Source 1]",
+        expectation=RAGCaseExpectation(
+            answerable=True,
+            expected_values=(".1",),
+            expected_units=("%",),
+            required_source_numbers=(1,),
+        ),
+        context_count=1,
+    )
+
+    assert assessment.numeric_correct is True
+    assert assessment.overall_pass is True
+
+
+def test_expected_phrase_does_not_match_inside_a_larger_word() -> None:
+    """A required `no` answer cannot receive credit from the word `cannot`."""
+
+    assessment = assess_answer(
+        "I cannot determine this from the context [Source 1].",
+        expectation=RAGCaseExpectation(
+            answerable=True,
+            expected_phrases=("no",),
+            required_source_numbers=(1,),
+        ),
+        context_count=1,
+    )
+
+    assert assessment.content_correct is False
+    assert assessment.overall_pass is False
 
 
 def test_source_number_cannot_satisfy_an_expected_numeric_value() -> None:
