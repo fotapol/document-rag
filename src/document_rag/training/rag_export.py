@@ -23,7 +23,7 @@ from document_rag.rag.service import InMemoryHybridIndexFactory, RetrieverFactor
 from document_rag.retrieval.benchmark import write_bytes_atomically
 from document_rag.retrieval.models import RetrievalResult
 
-RAG_TRAINING_SCHEMA_VERSION = 4
+RAG_TRAINING_SCHEMA_VERSION = 5
 DEFAULT_REFUSAL_RATIO = 0.2
 type RAGTrainingCategory = Literal[
     "simple_lookup",
@@ -296,6 +296,10 @@ def export_rag_training_data(
             "document_group_count": len(
                 {cast(str, record["document_group_id"]) for record in records}
             ),
+            "oracle_injected_source_position_counts": _count_record_integer_list_field(
+                records,
+                "oracle_injected_source_numbers",
+            ),
             "unit_status_counts": _count_record_field(records, "unit_status"),
         }
         content = _serialize_jsonl(records)
@@ -355,6 +359,7 @@ def export_rag_training_data(
             "document_split": "sha256_source-report-group_80_10_10",
             "document_resplit": resolved_export_config.document_resplit,
             "oracle_augment": resolved_export_config.oracle_augment,
+            "oracle_insertion_position": "sha256_example_and_chunk_modulo_available_slots",
             "reasoning_supervision": ("visible_normalized_calculation_program_then_final_answer"),
             "refusal_ratio": resolved_export_config.refusal_ratio,
             "sequence_budget": "drop_lowest_ranked_non_gold_then_exclude",
@@ -443,6 +448,7 @@ def _build_split_records(
             production_results = _rerank(deep_results[: rag_config.top_k])
             gold_ids = tuple(fact.element_id for fact in example.supporting_facts)
             context_mode: RAGTrainingContextMode = "retrieved"
+            oracle_injected_chunk_ids: tuple[str, ...] = ()
 
             if len(set(gold_ids)) > rag_config.top_k:
                 negative, negative_overflowed = _build_refusal_record(
@@ -503,11 +509,12 @@ def _build_split_records(
                 if not export_config.oracle_augment:
                     continue
 
-                supported_results = _oracle_augment(
+                supported_results, oracle_injected_chunk_ids = _oracle_augment(
                     production_results,
                     gold_ids=gold_ids,
                     chunks_by_source=chunks_by_source,
                     top_k=rag_config.top_k,
+                    placement_key=f"{loaded.dataset.value}:{example.example_id}",
                 )
                 context_mode = "oracle_augmented"
             else:
@@ -563,6 +570,7 @@ def _build_split_records(
                 context_mode=context_mode,
                 grounded_answer=grounded_answer,
                 gold_ids=gold_ids,
+                oracle_injected_chunk_ids=oracle_injected_chunk_ids,
                 max_sequence_tokens=export_config.max_sequence_tokens,
                 token_counter=token_counter,
             )
@@ -612,8 +620,10 @@ def _build_supported_record(
     context_mode: RAGTrainingContextMode,
     grounded_answer: _GroundedAnswer,
     gold_ids: tuple[str, ...],
+    oracle_injected_chunk_ids: tuple[str, ...],
 ) -> dict[str, object]:
     source_numbers = _gold_source_numbers(results, gold_ids)
+    source_number_by_chunk_id = {result.chunk_id: result.rank for result in results}
     reasoning_program = _normalized_reasoning_program(example)
     prompt = build_grounded_prompt(question=example.question.text, results=results)
     messages = [*prompt.to_messages(), {"role": "assistant", "content": grounded_answer.text}]
@@ -631,6 +641,10 @@ def _build_supported_record(
         "gold_source_element_ids": list(gold_ids),
         "gold_source_numbers": list(source_numbers),
         "messages": messages,
+        "oracle_injected_chunk_ids": list(oracle_injected_chunk_ids),
+        "oracle_injected_source_numbers": [
+            source_number_by_chunk_id[chunk_id] for chunk_id in oracle_injected_chunk_ids
+        ],
         "reasoning_program": reasoning_program,
         "source_chunk_ids": [result.chunk_id for result in results],
         "source_split": loaded.split.value,
@@ -648,6 +662,7 @@ def _fit_supported_record(
     context_mode: RAGTrainingContextMode,
     grounded_answer: _GroundedAnswer,
     gold_ids: tuple[str, ...],
+    oracle_injected_chunk_ids: tuple[str, ...],
     max_sequence_tokens: int,
     token_counter: TrainingTokenCounter,
 ) -> dict[str, object] | None:
@@ -667,6 +682,7 @@ def _fit_supported_record(
             context_mode=context_mode,
             grounded_answer=selected_answer,
             gold_ids=gold_ids,
+            oracle_injected_chunk_ids=oracle_injected_chunk_ids,
         )
         token_count = _record_token_count(record, token_counter=token_counter)
 
@@ -741,6 +757,8 @@ def _build_refusal_record(
                 *prompt.to_messages(),
                 {"role": "assistant", "content": UNSUPPORTED_ANSWER},
             ],
+            "oracle_injected_chunk_ids": [],
+            "oracle_injected_source_numbers": [],
             "reasoning_program": None,
             "source_chunk_ids": [result.chunk_id for result in selected_results],
             "source_split": loaded.split.value,
@@ -994,7 +1012,8 @@ def _oracle_augment(
     gold_ids: tuple[str, ...],
     chunks_by_source: Mapping[str, DocumentChunk],
     top_k: int,
-) -> tuple[RetrievalResult, ...]:
+    placement_key: str,
+) -> tuple[tuple[RetrievalResult, ...], tuple[str, ...]]:
     required_chunks: dict[str, DocumentChunk] = {}
 
     for gold_id in gold_ids:
@@ -1010,12 +1029,15 @@ def _oracle_augment(
 
     required_ids = set(required_chunks)
     selected = list(results)
+    injected: list[RetrievalResult] = []
 
     for chunk_id, chunk in sorted(required_chunks.items()):
         if any(result.chunk_id == chunk_id for result in selected):
             continue
 
-        selected.append(RetrievalResult(chunk=chunk, score=0.0, rank=len(selected) + 1))
+        result = RetrievalResult(chunk=chunk, score=0.0, rank=len(selected) + 1)
+        selected.append(result)
+        injected.append(result)
 
     while len(selected) > top_k:
         removable_index = next(
@@ -1032,12 +1054,22 @@ def _oracle_augment(
 
         selected.pop(removable_index)
 
-    augmented = _rerank(selected)
+    injected_ids = {result.chunk_id for result in injected}
+    positioned = [result for result in selected if result.chunk_id not in injected_ids]
+
+    for result in injected:
+        insertion_index = int(
+            _stable_digest("oracle-position", placement_key, result.chunk_id),
+            16,
+        ) % (len(positioned) + 1)
+        positioned.insert(insertion_index, result)
+
+    augmented = _rerank(positioned)
 
     if not _contains_all_gold(augmented, gold_ids):
         raise ValueError("Oracle augmentation did not preserve every gold source.")
 
-    return augmented
+    return augmented, tuple(result.chunk_id for result in injected)
 
 
 def _without_gold(
@@ -1344,6 +1376,32 @@ def _validate_records(
         if type(record.get("context_trimmed")) is not bool:
             raise ValueError(f"Missing context-trim audit flag for {record['example_id']!r}.")
 
+        source_chunk_ids = cast(list[str], record["source_chunk_ids"])
+        injected_chunk_ids = cast(list[str], record["oracle_injected_chunk_ids"])
+        injected_source_numbers = cast(list[int], record["oracle_injected_source_numbers"])
+
+        if len(injected_chunk_ids) != len(injected_source_numbers) or any(
+            source_number <= 0
+            or source_number > len(source_chunk_ids)
+            or source_chunk_ids[source_number - 1] != chunk_id
+            for chunk_id, source_number in zip(
+                injected_chunk_ids,
+                injected_source_numbers,
+                strict=True,
+            )
+        ):
+            raise ValueError(f"Invalid oracle-injection audit for {record['example_id']!r}.")
+
+        if record["context_mode"] == "oracle_augmented":
+            if not injected_chunk_ids:
+                raise ValueError(
+                    f"Oracle-augmented record lacks injected sources: {record['example_id']!r}."
+                )
+        elif injected_chunk_ids or injected_source_numbers:
+            raise ValueError(
+                f"Non-oracle record claims injected sources: {record['example_id']!r}."
+            )
+
         if [message["role"] for message in messages] != ["system", "user", "assistant"]:
             raise ValueError(f"Invalid message roles for {record['example_id']!r}.")
 
@@ -1396,6 +1454,19 @@ def _count_record_field(
         counts[cast(str, record[field])] += 1
 
     return dict(sorted(counts.items()))
+
+
+def _count_record_integer_list_field(
+    records: Iterable[dict[str, object]],
+    field: str,
+) -> dict[str, int]:
+    counts: dict[str, int] = defaultdict(int)
+
+    for record in records:
+        for value in cast(list[int], record[field]):
+            counts[str(value)] += 1
+
+    return dict(sorted(counts.items(), key=lambda item: int(item[0])))
 
 
 def _validate_splits(splits: Sequence[DatasetSplit]) -> tuple[DatasetSplit, ...]:

@@ -5,7 +5,7 @@ gold facts are rendered as an unlabeled context and the assistant returns only t
 That format is useful for reproducing adapter v1, but it teaches outputs such as `14.1` rather than
 the grounded application response `$14.1 million. [Source 2]`.
 
-The `training export-rag` command is a separate schema-v4 pipeline for the next adapter. It leaves the
+The `training export-rag` command is a separate schema-v5 pipeline for the next adapter. It leaves the
 legacy exporter unchanged and reuses the production RAG prompt, table-row representation, hybrid
 retrieval factory, source lineage, and diversity configuration.
 
@@ -38,6 +38,13 @@ Oracle augmentation is explicit because generator supervision must never pair an
 context that cannot support it. It is not evidence that production retrieval succeeded. Use the
 `oracle_augmented_count` in the manifest as a retrieval-quality diagnostic.
 
+An oracle-injected chunk is placed at a deterministic hash-derived source position instead of
+always being appended. The hash uses the dataset, example, and chunk identities, so exports remain
+byte-identical while injected evidence is distributed across available positions. Real retrieved
+contexts retain their original ranking. Each record audits synthetic evidence through
+`oracle_injected_chunk_ids` and `oracle_injected_source_numbers`; the manifest reports
+`oracle_injected_source_position_counts` by split.
+
 The assistant target contains:
 
 - a visible, normalized calculation program when the dataset supplies one;
@@ -54,6 +61,7 @@ Example:
   "context_mode": "oracle_augmented",
   "expected_units": ["$", "million"],
   "gold_source_numbers": [1],
+  "oracle_injected_source_numbers": [1],
   "messages": [
     {"role": "system", "content": "<the exact production system instruction>"},
     {"role": "user", "content": "Retrieved context:\n\n[Source 1 | page 1 | chunk_id ...]\n...\n\nQuestion:\n..."},
@@ -192,6 +200,7 @@ Before uploading anything, inspect `manifest.json` and a sample from every split
 
 - supported/refusal ratio;
 - retrieved versus oracle-augmented counts;
+- distribution of oracle-injected source positions;
 - ambiguous-unit exclusions;
 - gold-source overflow exclusions;
 - contexts trimmed to meet the training sequence budget;
