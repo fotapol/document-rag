@@ -23,7 +23,7 @@ from document_rag.rag.service import InMemoryHybridIndexFactory, RetrieverFactor
 from document_rag.retrieval.benchmark import write_bytes_atomically
 from document_rag.retrieval.models import RetrievalResult
 
-RAG_TRAINING_SCHEMA_VERSION = 2
+RAG_TRAINING_SCHEMA_VERSION = 3
 DEFAULT_REFUSAL_RATIO = 0.2
 type RAGTrainingCategory = Literal[
     "simple_lookup",
@@ -75,6 +75,7 @@ class RAGTrainingArtifact:
     record_count: int
     supported_count: int
     refusal_count: int
+    calculation_supervised_count: int
     oracle_augmented_count: int
     ambiguous_unit_exclusion_count: int
     gold_source_overflow_exclusion_count: int
@@ -176,6 +177,9 @@ def export_rag_training_data(
         records = [record for record in all_records if record["split"] == split.value]
         supported_count = sum(cast(bool, record["answerable"]) for record in records)
         refusal_count = len(records) - supported_count
+        calculation_supervised_count = sum(
+            cast(bool, record["calculation_supervised"]) for record in records
+        )
         oracle_augmented_count = sum(
             record["context_mode"] == "oracle_augmented" for record in records
         )
@@ -222,6 +226,7 @@ def export_rag_training_data(
                 record_count=len(records),
                 supported_count=supported_count,
                 refusal_count=refusal_count,
+                calculation_supervised_count=calculation_supervised_count,
                 oracle_augmented_count=oracle_augmented_count,
                 ambiguous_unit_exclusion_count=ambiguous_unit_exclusion_count,
                 gold_source_overflow_exclusion_count=(gold_source_overflow_exclusion_count),
@@ -233,6 +238,7 @@ def export_rag_training_data(
         "artifacts": {
             artifact.split.value: {
                 "ambiguous_unit_exclusion_count": artifact.ambiguous_unit_exclusion_count,
+                "calculation_supervised_count": artifact.calculation_supervised_count,
                 "oracle_augmented_count": artifact.oracle_augmented_count,
                 "gold_source_overflow_exclusion_count": (
                     artifact.gold_source_overflow_exclusion_count
@@ -261,6 +267,7 @@ def export_rag_training_data(
             "document_split": "sha256_source-report-group_80_10_10",
             "document_resplit": resolved_export_config.document_resplit,
             "oracle_augment": resolved_export_config.oracle_augment,
+            "reasoning_supervision": ("visible_normalized_calculation_program_then_final_answer"),
             "refusal_ratio": resolved_export_config.refusal_ratio,
             "unsupported_target": UNSUPPORTED_ANSWER,
         },
@@ -454,10 +461,12 @@ def _build_supported_record(
     gold_ids: tuple[str, ...],
 ) -> dict[str, object]:
     source_numbers = _gold_source_numbers(results, gold_ids)
+    reasoning_program = _normalized_reasoning_program(example)
     prompt = build_grounded_prompt(question=example.question.text, results=results)
     messages = [*prompt.to_messages(), {"role": "assistant", "content": grounded_answer.text}]
     return {
         "answerable": True,
+        "calculation_supervised": reasoning_program is not None,
         "category": _category(example, results=results, gold_ids=gold_ids),
         "context_mode": context_mode,
         "dataset": loaded.dataset.value,
@@ -469,8 +478,7 @@ def _build_supported_record(
         "gold_source_element_ids": list(gold_ids),
         "gold_source_numbers": list(source_numbers),
         "messages": messages,
-        "reasoning_program": example.reference_answer.normalized_program
-        or example.reference_answer.program,
+        "reasoning_program": reasoning_program,
         "source_chunk_ids": [result.chunk_id for result in results],
         "source_split": loaded.split.value,
         "split": loaded.split.value,
@@ -492,6 +500,7 @@ def _build_refusal_record(
     prompt = build_grounded_prompt(question=example.question.text, results=results)
     return {
         "answerable": False,
+        "calculation_supervised": False,
         "category": "unsupported",
         "context_mode": mode,
         "dataset": loaded.dataset.value,
@@ -534,17 +543,22 @@ def _build_grounded_answer(
         answer=example.reference_answer.text,
         question=example.question.text,
         evidence_texts=gold_texts,
-        program=example.reference_answer.normalized_program or example.reference_answer.program,
+        program=_normalized_reasoning_program(example),
     )
 
     if formatted is None:
         return None
 
-    explanation = (example.reference_answer.explanation or "").strip()
-    sentence = explanation.rstrip(".") if explanation else f"The answer is {formatted.text}"
+    reasoning_program = _normalized_reasoning_program(example)
 
-    if formatted.text.casefold() not in sentence.casefold():
-        sentence = f"{sentence}. The answer is {formatted.text}"
+    if reasoning_program is not None:
+        sentence = f"Calculation:\n{reasoning_program}\nThe answer is {formatted.text}"
+    else:
+        explanation = (example.reference_answer.explanation or "").strip()
+        sentence = explanation.rstrip(".") if explanation else f"The answer is {formatted.text}"
+
+        if formatted.text.casefold() not in sentence.casefold():
+            sentence = f"{sentence}. The answer is {formatted.text}"
 
     citations = " ".join(f"[Source {number}]" for number in source_numbers)
     return _GroundedAnswer(
@@ -552,6 +566,18 @@ def _build_grounded_answer(
         expected_units=formatted.expected_units,
         unit_status=formatted.unit_status,
     )
+
+
+def _normalized_reasoning_program(example: DatasetExample) -> str | None:
+    """Return a stable, visible calculation program for supervised reasoning."""
+
+    program = example.reference_answer.normalized_program or example.reference_answer.program
+
+    if program is None:
+        return None
+
+    lines = tuple(line.strip() for line in program.splitlines() if line.strip())
+    return "\n".join(lines) or None
 
 
 def _format_answer_with_units(

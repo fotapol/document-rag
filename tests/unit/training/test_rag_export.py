@@ -84,6 +84,7 @@ def test_export_builds_supported_oracle_and_refusal_examples(tmp_path: Path) -> 
     assert artifact.record_count == 5
     assert artifact.supported_count == 4
     assert artifact.refusal_count == 1
+    assert artifact.calculation_supervised_count == 1
     assert artifact.oracle_augmented_count == 1
     assert artifact.ambiguous_unit_exclusion_count == 1
     assert all(record["messages"][0]["content"] == SYSTEM_INSTRUCTION for record in records)
@@ -92,12 +93,16 @@ def test_export_builds_supported_oracle_and_refusal_examples(tmp_path: Path) -> 
     assert calculation["category"] == "reasoning"
     assert calculation["context_mode"] == "oracle_augmented"
     assert calculation["expected_units"] == ["$", "million"]
-    assert "$20 million" in calculation["messages"][2]["content"]
-    assert "[Source 1]" in calculation["messages"][2]["content"]
+    assert calculation["calculation_supervised"] is True
+    assert calculation["reasoning_program"] == "subtract(120, 100)"
+    assert calculation["messages"][2]["content"] == (
+        "Calculation:\nsubtract(120, 100)\nThe answer is $20 million. [Source 1]"
+    )
     assert "Retrieved context:" in calculation["messages"][1]["content"]
     assert "chunk_id training-chunk:" in calculation["messages"][1]["content"]
 
     percentage = _record(records, "finqa:percentage:supported")
+    assert percentage["calculation_supervised"] is False
     assert percentage["unit_status"] == "preserved"
     assert percentage["expected_units"] == ["%"]
     assert "25%" in percentage["messages"][2]["content"]
@@ -111,14 +116,19 @@ def test_export_builds_supported_oracle_and_refusal_examples(tmp_path: Path) -> 
 
     refusal = _record(records, "finqa:calculation:unsupported")
     assert refusal["answerable"] is False
+    assert refusal["calculation_supervised"] is False
     assert refusal["messages"][2]["content"] == UNSUPPORTED_ANSWER
     assert refusal["gold_source_numbers"] == []
     assert "high-ranking distractor" in refusal["messages"][1]["content"].casefold()
 
     manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
-    assert manifest["schema_version"] == 2
+    assert manifest["schema_version"] == 3
+    assert manifest["policies"]["reasoning_supervision"] == (
+        "visible_normalized_calculation_program_then_final_answer"
+    )
     assert manifest["policies"]["unsupported_target"] == UNSUPPORTED_ANSWER
     assert manifest["retrieval"]["top_k"] == 1
+    assert manifest["artifacts"]["train"]["calculation_supervised_count"] == 1
     assert manifest["artifacts"]["train"]["category_counts"] == {
         "reasoning": 1,
         "simple_lookup": 2,
