@@ -23,6 +23,8 @@ def test_default_config_pins_base_model_and_adapter() -> None:
     assert config.base_model_revision == DEFAULT_BASE_MODEL_REVISION
     assert config.adapter_model_id == DEFAULT_ADAPTER_MODEL_ID
     assert config.adapter_model_revision == DEFAULT_ADAPTER_MODEL_REVISION
+    assert config.adapter_model_id == "fotapol/qwen3-1.7b-financial-rag-lora-v4"
+    assert config.adapter_model_revision == "d1af458b0bde4c74ccf87e3042ac8bb2390a8c65"
 
 
 def test_environment_overrides_runtime_limits(monkeypatch: pytest.MonkeyPatch) -> None:
