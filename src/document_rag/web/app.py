@@ -251,7 +251,7 @@ def create_app(
                 status_code=503,
             )
         except RAGGenerationError as exc:
-            LOGGER.warning("Answer generation failed: %s", exc)
+            LOGGER.warning("Answer generation failed: %s", exc, exc_info=True)
             return render_result(
                 request,
                 document=document,

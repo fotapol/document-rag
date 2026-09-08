@@ -104,6 +104,25 @@ def test_health() -> None:
     assert response.json() == {"status": "ok"}
 
 
+def test_index_renders_accessible_empty_workspace() -> None:
+    """The landing page should explain the workflow before a PDF is uploaded."""
+
+    client = TestClient(create_app(FakeParser()))
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "Ask your document" in response.text
+    assert "Upload a PDF to ask a question." in response.text
+    assert 'aria-label="Application workflow"' in response.text
+    assert response.text.count('class="workflow-step"') == 2
+    assert 'id="cancel-question"' in response.text
+    assert "new AbortController()" in response.text
+    assert "questionController.abort()" in response.text
+    assert "color-scheme: dark" in response.text
+    assert "Model can make mistakes. Check important info." in response.text
+
+
 def test_parse_and_chunk_pdf() -> None:
     """A valid PDF should render Markdown, chunks, and JSONL download."""
 
@@ -128,18 +147,16 @@ def test_parse_and_chunk_pdf() -> None:
 
     assert response.status_code == 200
     assert "report.pdf" in response.text
-    assert "Revenue: $100" in response.text
-    assert "sha256:test" in response.text
-    assert "Retrieval chunks" in response.text
-    assert "Download chunks as JSONL" in response.text
-    assert "Tokens" in response.text
-    assert "chunk:" in response.text
     assert "Ask this document" in response.text
+    assert "report.pdf is ready for questions." in response.text
+    assert "sha256:test" not in response.text
+    assert "Download chunks" not in response.text
+    assert "Hybrid BM25" not in response.text
     assert len(question_answering.indexed_chunks) == 1
 
 
-def test_ask_question_displays_answer_citation_and_debug_context() -> None:
-    """The web MVP should preserve its in-memory index across form requests."""
+def test_ask_question_displays_answer_and_simple_citation() -> None:
+    """The web MVP should preserve its index without exposing technical details."""
 
     question_answering = FakeQuestionAnsweringService()
     client = TestClient(
@@ -168,10 +185,11 @@ def test_ask_question_displays_answer_citation_and_debug_context() -> None:
     assert response.status_code == 200
     assert question_answering.questions == ["What was revenue?"]
     assert "Revenue was $100 [Source 1]." in response.text
-    assert "Source citations" in response.text
-    assert "page 1" in response.text
-    assert question_answering.indexed_chunks[0].chunk_id in response.text
-    assert "Retrieved chunks and scores" in response.text
+    assert ">Sources</h2>" in response.text
+    assert "Page 1" in response.text
+    assert question_answering.indexed_chunks[0].chunk_id not in response.text
+    assert "Retrieved chunks and scores" not in response.text
+    assert 'id="answer-heading">Answer' in response.text
 
 
 def test_ask_question_before_upload_returns_conflict() -> None:
@@ -251,3 +269,4 @@ def test_render_known_parser_failure() -> None:
 
     assert response.status_code == 502
     assert "Parser failed." in response.text
+    assert 'role="alert"' in response.text

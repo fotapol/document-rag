@@ -2,270 +2,781 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1"
+        name="description"
+        content="Ask grounded questions about financial PDF documents with source citations."
     >
     <title>Document RAG</title>
     <style>
         :root {
-            color-scheme: light dark;
-            font-family: system-ui, sans-serif;
+            color-scheme: dark;
+            --canvas: #0b0d12;
+            --surface: #12151c;
+            --surface-raised: #181c25;
+            --surface-soft: #0f1218;
+            --line: #292e3a;
+            --line-strong: #3a4150;
+            --text: #f3f5f8;
+            --text-soft: #9ca5b5;
+            --accent: #7596ff;
+            --accent-strong: #91aaff;
+            --accent-soft: rgb(117 150 255 / 12%);
+            --danger: #ff858e;
+            --danger-soft: rgb(255 93 105 / 9%);
+            --radius: 14px;
+            font-family:
+                Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+                "Segoe UI", sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        [hidden] {
+            display: none !important;
+        }
+
+        html {
+            min-width: 320px;
+            background: var(--canvas);
         }
 
         body {
-            max-width: 960px;
-            margin: 0 auto;
-            padding: 2rem;
-            line-height: 1.5;
+            min-height: 100vh;
+            margin: 0;
+            color: var(--text);
+            background:
+                radial-gradient(circle at 50% -20%, rgb(117 150 255 / 10%), transparent 32rem),
+                var(--canvas);
+            font-size: 1rem;
+            line-height: 1.55;
         }
 
-        form,
-        .panel {
-            border: 1px solid #7776;
-            border-radius: 0.5rem;
+        button,
+        input {
+            font: inherit;
+        }
+
+        button,
+        summary,
+        input[type="file"] {
+            cursor: pointer;
+        }
+
+        button:focus-visible,
+        input:focus-visible,
+        summary:focus-visible {
+            outline: 3px solid rgb(117 150 255 / 42%);
+            outline-offset: 3px;
+        }
+
+        h1,
+        h2,
+        p {
+            margin-top: 0;
+        }
+
+        .site-header,
+        main,
+        .site-footer {
+            width: min(800px, calc(100% - 2rem));
+            margin-inline: auto;
+        }
+
+        .site-header {
+            display: flex;
+            align-items: center;
+            min-height: 68px;
+            border-bottom: 1px solid var(--line);
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 0.65rem;
+            font-weight: 760;
+            letter-spacing: -0.02em;
+        }
+
+        .brand-mark {
+            display: grid;
+            width: 34px;
+            height: 34px;
+            place-items: center;
+            border: 1px solid var(--line-strong);
+            border-radius: 9px;
+            color: var(--accent-strong);
+            background: var(--surface);
+        }
+
+        main {
+            padding-block: 3.25rem 2rem;
+        }
+
+        .hero {
+            margin-bottom: 2rem;
+        }
+
+        .eyebrow {
+            margin-bottom: 0.6rem;
+            color: var(--accent-strong);
+            font-size: 0.76rem;
+            font-weight: 800;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+        }
+
+        h1 {
+            margin-bottom: 0.75rem;
+            font-size: clamp(2.1rem, 7vw, 3.45rem);
+            line-height: 1.04;
+            letter-spacing: -0.05em;
+        }
+
+        .hero-copy {
+            max-width: 620px;
+            margin-bottom: 0;
+            color: var(--text-soft);
+        }
+
+        .error-panel {
+            display: flex;
+            gap: 0.8rem;
+            margin-bottom: 1rem;
             padding: 1rem;
-            margin: 1rem 0;
+            border: 1px solid rgb(255 133 142 / 30%);
+            border-radius: var(--radius);
+            color: #ffc4c8;
+            background: var(--danger-soft);
         }
 
-        button {
-            margin-top: 1rem;
-            padding: 0.6rem 1rem;
+        .error-panel strong,
+        .error-panel p {
+            margin: 0;
+        }
+
+        .error-icon {
+            color: var(--danger);
+            font-weight: 900;
+        }
+
+        .workflow {
+            display: grid;
+            gap: 0.75rem;
+        }
+
+        .workflow-step {
+            overflow: hidden;
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            background: var(--surface);
+        }
+
+        .workflow-step[open] {
+            border-color: var(--line-strong);
+            background: var(--surface-raised);
+        }
+
+        .step-summary {
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr) auto auto;
+            align-items: center;
+            gap: 0.9rem;
+            min-height: 72px;
+            padding: 0.9rem 1rem;
+            list-style: none;
+        }
+
+        .step-summary::-webkit-details-marker {
+            display: none;
+        }
+
+        .step-number {
+            display: grid;
+            width: 34px;
+            height: 34px;
+            place-items: center;
+            border: 1px solid var(--line-strong);
+            border-radius: 9px;
+            color: var(--accent-strong);
+            background: var(--surface-soft);
+            font-size: 0.75rem;
+            font-weight: 800;
+        }
+
+        .step-title,
+        .step-description {
+            display: block;
+        }
+
+        .step-title {
+            font-weight: 760;
+        }
+
+        .step-description {
+            overflow: hidden;
+            color: var(--text-soft);
+            font-size: 0.8rem;
+            font-weight: 450;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .step-state {
+            padding: 0.2rem 0.55rem;
+            border: 1px solid var(--line-strong);
+            border-radius: 999px;
+            color: var(--text-soft);
+            background: var(--surface-soft);
+            font-size: 0.7rem;
+            font-weight: 750;
+            text-transform: uppercase;
+        }
+
+        .step-state.ready {
+            border-color: rgb(117 150 255 / 34%);
+            color: #b8c7ff;
+            background: var(--accent-soft);
+        }
+
+        .chevron {
+            color: var(--text-soft);
+            transition: transform 160ms ease;
+        }
+
+        .workflow-step[open] > .step-summary .chevron {
+            transform: rotate(180deg);
+        }
+
+        .step-content {
+            padding: 1.15rem 1rem 1.2rem;
+            border-top: 1px solid var(--line);
+        }
+
+        .upload-form,
+        .question-form {
+            display: grid;
+            gap: 0.85rem;
+        }
+
+        .upload-zone {
+            display: grid;
+            gap: 0.55rem;
+            padding: 1rem;
+            border: 1px dashed var(--line-strong);
+            border-radius: 11px;
+            background: var(--surface-soft);
+        }
+
+        .upload-zone:focus-within {
+            border-color: var(--accent);
+        }
+
+        .upload-label,
+        .question-label {
+            font-weight: 700;
+        }
+
+        .helper,
+        .selected-file,
+        .request-status {
+            min-height: 1.25rem;
+            margin-bottom: 0;
+            color: var(--text-soft);
+            font-size: 0.82rem;
+        }
+
+        .selected-file,
+        .ready-message {
+            color: #bdc9f8;
+        }
+
+        .ready-message {
+            margin-bottom: 0.85rem;
+            font-weight: 650;
+        }
+
+        input[type="file"] {
+            width: 100%;
+            color: var(--text-soft);
+            font-size: 0.85rem;
+        }
+
+        input[type="file"]::file-selector-button {
+            margin-right: 0.75rem;
+            padding: 0.48rem 0.7rem;
+            border: 1px solid var(--line-strong);
+            border-radius: 8px;
+            color: var(--text);
+            background: var(--surface-raised);
+            font-weight: 700;
+        }
+
+        .button-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.65rem;
+        }
+
+        .button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            min-height: 44px;
+            padding: 0.6rem 0.95rem;
+            border: 1px solid var(--accent);
+            border-radius: 9px;
+            color: #091025;
+            background: var(--accent);
+            font-weight: 760;
+            transition: border-color 150ms ease, background 150ms ease;
+        }
+
+        .button:hover {
+            border-color: var(--accent-strong);
+            background: var(--accent-strong);
+        }
+
+        .button:disabled {
+            cursor: not-allowed;
+            opacity: 0.58;
+        }
+
+        .button-cancel {
+            border-color: rgb(255 133 142 / 55%);
+            color: #ffc0c5;
+            background: transparent;
+        }
+
+        .button-cancel:hover {
+            border-color: var(--danger);
+            background: var(--danger-soft);
+        }
+
+        .button[aria-busy="true"]::before {
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgb(9 16 37 / 30%);
+            border-top-color: #091025;
+            border-radius: 50%;
+            content: "";
+            animation: spin 700ms linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .question-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 0.65rem;
         }
 
         input[type="text"] {
-            box-sizing: border-box;
-            margin-top: 0.5rem;
-            padding: 0.6rem;
             width: 100%;
+            min-height: 46px;
+            padding: 0.65rem 0.8rem;
+            border: 1px solid var(--line-strong);
+            border-radius: 9px;
+            color: var(--text);
+            background: var(--surface-soft);
         }
 
-        .error {
-            border-color: #c33;
+        input[type="text"]::placeholder {
+            color: #747d8d;
         }
 
-        .metadata {
-            display: grid;
-            grid-template-columns: max-content 1fr;
-            gap: 0.25rem 1rem;
+        input[type="text"]:disabled {
+            cursor: not-allowed;
+            opacity: 0.6;
         }
 
-        .metadata dt {
-            font-weight: 600;
+        .answer {
+            margin-top: 1.25rem;
+            padding-top: 1.25rem;
+            border-top: 1px solid var(--line);
         }
 
-        .metadata dd {
-            margin: 0;
-            overflow-wrap: anywhere;
+        .answer-label {
+            display: block;
+            margin-bottom: 0.7rem;
+            color: var(--accent-strong);
+            font-size: 0.75rem;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
         }
 
-        pre {
+        .answer-copy {
+            margin-bottom: 1.2rem;
+            font-size: 1.12rem;
+            line-height: 1.65;
             white-space: pre-wrap;
-            overflow-wrap: anywhere;
         }
 
-        details {
-            margin: 1rem 0;
+        .section-title {
+            margin-bottom: 0.65rem;
+            font-size: 0.9rem;
         }
 
-        code {
-            font-family: ui-monospace, monospace;
+        .citations {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin: 0;
+            padding: 0;
+            list-style: none;
         }
 
-        .chunk {
-            border-top: 1px solid #7776;
-            padding-top: 1rem;
-            margin-top: 1rem;
+        .citation {
+            padding: 0.45rem 0.65rem;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            color: var(--text-soft);
+            background: var(--surface-soft);
+            font-size: 0.78rem;
+        }
+
+        .citation strong {
+            color: #bdc9f8;
+        }
+
+        .model-notice {
+            margin: 1.2rem 0 0;
+            color: #747d8d;
+            font-size: 0.78rem;
+            text-align: center;
+        }
+
+        .site-footer {
+            padding-bottom: 2rem;
+            color: #5f6775;
+            font-size: 0.72rem;
+            text-align: center;
+        }
+
+        @media (max-width: 600px) {
+            main {
+                padding-top: 2.2rem;
+            }
+
+            .step-summary {
+                grid-template-columns: auto minmax(0, 1fr) auto;
+            }
+
+            .step-state {
+                display: none;
+            }
+
+            .question-row {
+                grid-template-columns: 1fr;
+            }
+
+            .question-row .button,
+            .upload-form > .button,
+            .button-row .button {
+                width: 100%;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *,
+            *::before,
+            *::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+            }
         }
     </style>
 </head>
 <body>
-    <main>
-        <h1>Document RAG</h1>
-        <p>
-            Upload one PDF. The server validates it, parses it with
-            LlamaParse, creates deterministic retrieval chunks, and indexes
-            them for grounded financial question answering.
-        </p>
+    <header class="site-header">
+        <div class="brand" aria-label="Document RAG">
+            <span class="brand-mark" aria-hidden="true">
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none">
+                    <path d="M6 3.75h8.5L18 7.25v13H6z" stroke="currentColor" stroke-width="1.7"/>
+                    <path d="M14 3.75v4h4M8.8 12h6.4M8.8 15.5h4.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+                </svg>
+            </span>
+            <span>Document RAG</span>
+        </div>
+    </header>
 
-        <form
-            action="/documents/parse"
-            method="post"
-            enctype="multipart/form-data"
-        >
-            <label for="file">
-                PDF file, maximum {{ max_upload_mb }} MB
-            </label>
-            <br>
-            <input
-                id="file"
-                name="file"
-                type="file"
-                accept="application/pdf,.pdf"
-                required
-            >
-            <br>
-            <button type="submit">Parse and chunk document</button>
-        </form>
+    <main>
+        <section class="hero" aria-labelledby="page-title">
+            <p class="eyebrow">Financial document assistant</p>
+            <h1 id="page-title">Ask your document.</h1>
+            <p class="hero-copy">Upload a financial PDF and get answers supported by its pages.</p>
+        </section>
 
         {% if error %}
-        <section class="panel error">
-            <h2>Request failed</h2>
-            <p>{{ error }}</p>
+        <section class="error-panel" role="alert" aria-live="assertive">
+            <span class="error-icon" aria-hidden="true">!</span>
+            <div>
+                <strong>Something went wrong</strong>
+                <p>{{ error }}</p>
+            </div>
         </section>
         {% endif %}
 
-        {% if document %}
-        <section class="panel">
-            <h2>Parsed document</h2>
-            <dl class="metadata">
-                <dt>Filename</dt>
-                <dd>{{ document.filename }}</dd>
-                <dt>Document ID</dt>
-                <dd><code>{{ document.document_id }}</code></dd>
-                <dt>Pages</dt>
-                <dd>{{ document.pages | length }}</dd>
-                <dt>Chunks</dt>
-                <dd>{{ chunks | length }}</dd>
-            </dl>
-
-            {% for page in document.pages %}
-            <details {% if loop.first %}open{% endif %}>
-                <summary>Parsed Markdown — page {{ page.page_number }}</summary>
-                <pre>{{ page.markdown }}</pre>
+        <section class="workflow" aria-label="Application workflow">
+            <details class="workflow-step" {% if not document %}open{% endif %}>
+                <summary class="step-summary">
+                    <span class="step-number">01</span>
+                    <span>
+                        <span class="step-title">Upload document</span>
+                        <span class="step-description">
+                            {% if document %}{{ document.filename }}{% else %}Choose a financial PDF{% endif %}
+                        </span>
+                    </span>
+                    <span class="step-state {% if document %}ready{% endif %}">
+                        {% if document %}Ready{% else %}Start{% endif %}
+                    </span>
+                    <span class="chevron" aria-hidden="true">⌄</span>
+                </summary>
+                <div class="step-content">
+                    {% if document %}
+                    <p class="ready-message">{{ document.filename }} is ready for questions.</p>
+                    {% endif %}
+                    <form
+                        class="upload-form"
+                        action="/documents/parse"
+                        method="post"
+                        enctype="multipart/form-data"
+                        data-upload-form
+                    >
+                        <div class="upload-zone">
+                            <label class="upload-label" for="file">
+                                {% if document %}Choose another PDF{% else %}Choose a PDF{% endif %}
+                            </label>
+                            <input
+                                id="file"
+                                name="file"
+                                type="file"
+                                accept="application/pdf,.pdf"
+                                aria-describedby="file-help selected-file"
+                                required
+                            >
+                            <p id="file-help" class="helper">Maximum {{ max_upload_mb }} MB.</p>
+                            <p id="selected-file" class="selected-file" aria-live="polite"></p>
+                        </div>
+                        <button class="button" type="submit" data-busy-label="Preparing…">
+                            <span class="button-label">
+                                {% if document %}Replace document{% else %}Upload document{% endif %}
+                            </span>
+                        </button>
+                    </form>
+                </div>
             </details>
-            {% endfor %}
-        </section>
 
-        <section class="panel">
-            <h2>Ask this document</h2>
-            <form action="/questions/ask" method="post">
-                <label for="question">Financial question</label>
-                <input
-                    id="question"
-                    name="question"
-                    type="text"
-                    value="{{ question }}"
-                    placeholder="What was the percentage change in revenue?"
-                    required
-                >
-                <button type="submit">Retrieve and answer</button>
-            </form>
-            <p>
-                Answers use the configured top hybrid BM25 + dense results
-                from the currently uploaded document.
-            </p>
-        </section>
+            <details class="workflow-step" {% if document %}open{% endif %}>
+                <summary class="step-summary">
+                    <span class="step-number">02</span>
+                    <span>
+                        <span class="step-title">Ask this document</span>
+                        <span class="step-description">Get an answer and check its sources</span>
+                    </span>
+                    <span class="step-state {% if document %}ready{% endif %}">
+                        {% if document %}Ready{% else %}Waiting{% endif %}
+                    </span>
+                    <span class="chevron" aria-hidden="true">⌄</span>
+                </summary>
+                <div class="step-content">
+                    <form
+                        class="question-form"
+                        id="question-form"
+                        action="/questions/ask"
+                        method="post"
+                    >
+                        <label class="question-label" for="question">Your question</label>
+                        <div class="question-row">
+                            <input
+                                id="question"
+                                name="question"
+                                type="text"
+                                value="{{ question }}"
+                                placeholder="What was revenue in 2025?"
+                                autocomplete="off"
+                                {% if not document %}disabled{% endif %}
+                                required
+                            >
+                            <div class="button-row">
+                                <button
+                                    class="button"
+                                    id="ask-question"
+                                    type="submit"
+                                    data-busy-label="Answering…"
+                                    {% if not document %}disabled{% endif %}
+                                >
+                                    <span class="button-label">Ask question</span>
+                                </button>
+                                <button
+                                    class="button button-cancel"
+                                    id="cancel-question"
+                                    type="button"
+                                    hidden
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                        <p class="request-status" id="question-status" aria-live="polite">
+                            {% if not document %}Upload a PDF to ask a question.{% endif %}
+                        </p>
+                    </form>
 
-        {% if answer %}
-        <section class="panel">
-            <h2>Answer</h2>
-            <p>{{ answer.answer }}</p>
+                    {% if answer %}
+                    <section class="answer" aria-labelledby="answer-heading" aria-live="polite">
+                        <span class="answer-label" id="answer-heading">Answer</span>
+                        <p class="answer-copy">{{ answer.answer }}</p>
 
-            <h3>Source citations</h3>
-            <ol>
-                {% for citation in answer.citations %}
-                <li>
-                    <strong>Source {{ citation.source_number }}</strong>:
-                    page {{ citation.page_label }},
-                    chunk <code>{{ citation.chunk_id }}</code>
-                </li>
-                {% endfor %}
-            </ol>
-
-            <details>
-                <summary>Retrieved chunks and scores</summary>
-                {% for result in answer.retrieved %}
-                <article class="chunk">
-                    <h3>Source {{ loop.index }}</h3>
-                    <dl class="metadata">
-                        <dt>Chunk ID</dt>
-                        <dd><code>{{ result.chunk_id }}</code></dd>
-                        <dt>Page</dt>
-                        <dd>
-                            {{ result.chunk.page_start }}{% if result.chunk.page_end != result.chunk.page_start %}-{{ result.chunk.page_end }}{% endif %}
-                        </dd>
-                        <dt>RRF score</dt>
-                        <dd>{{ "%.8f" | format(result.score) }}</dd>
-                        {% if result.bm25_rank is defined %}
-                        <dt>BM25 rank</dt>
-                        <dd>{{ result.bm25_rank or "not retrieved" }}</dd>
-                        {% endif %}
-                        {% if result.dense_rank is defined %}
-                        <dt>Dense rank</dt>
-                        <dd>{{ result.dense_rank or "not retrieved" }}</dd>
-                        {% endif %}
-                    </dl>
-                    <pre>{{ result.chunk.text }}</pre>
-                </article>
-                {% endfor %}
+                        <h2 class="section-title">Sources</h2>
+                        <ol class="citations">
+                            {% for citation in answer.citations %}
+                            <li class="citation">
+                                <strong>Source {{ citation.source_number }}</strong>
+                                · Page {{ citation.page_label }}
+                            </li>
+                            {% endfor %}
+                        </ol>
+                    </section>
+                    {% endif %}
+                </div>
             </details>
         </section>
-        {% endif %}
 
-        <section class="panel">
-            <h2>Retrieval chunks</h2>
-            <p>
-                Chunk IDs are deterministic for identical document bytes,
-                page structure, configuration, and normalized Markdown.
-            </p>
-
-            <button
-                id="download-chunks"
-                type="button"
-                data-filename="chunks-{{ document.sha256[:12] }}.jsonl"
-            >
-                Download chunks as JSONL
-            </button>
-
-            <textarea id="chunks-jsonl" hidden>{{ chunks_jsonl }}</textarea>
-
-            {% for chunk in chunks %}
-            <article class="chunk">
-                <h3>Chunk {{ chunk.chunk_index }}</h3>
-                <dl class="metadata">
-                    <dt>Chunk ID</dt>
-                    <dd><code>{{ chunk.chunk_id }}</code></dd>
-                    <dt>Page</dt>
-                    <dd>{{ chunk.page_start }}</dd>
-                    <dt>Characters</dt>
-                    <dd>{{ chunk.char_count }}</dd>
-                    <dt>Tokens</dt>
-                    <dd>{{ chunk.token_count }}</dd>
-                    <dt>Markdown blocks</dt>
-                    <dd>{{ chunk.block_count }}</dd>
-                </dl>
-                <pre>{{ chunk.text }}</pre>
-            </article>
-            {% endfor %}
-        </section>
-
-        <script>
-            "use strict";
-
-            const downloadButton =
-                document.getElementById("download-chunks");
-            const jsonlText =
-                document.getElementById("chunks-jsonl").value;
-
-            downloadButton.addEventListener("click", () => {
-                const blob = new Blob(
-                    [jsonlText],
-                    {type: "application/x-ndjson;charset=utf-8"},
-                );
-                const objectUrl = URL.createObjectURL(blob);
-                const link = document.createElement("a");
-
-                link.href = objectUrl;
-                link.download = downloadButton.dataset.filename;
-                document.body.appendChild(link);
-                link.click();
-                link.remove();
-
-                URL.revokeObjectURL(objectUrl);
-            });
-        </script>
-        {% endif %}
+        <p class="model-notice">Model can make mistakes. Check important info.</p>
     </main>
+
+    <footer class="site-footer">Document RAG</footer>
+
+    <script>
+        "use strict";
+
+        const fileInput = document.getElementById("file");
+        const selectedFile = document.getElementById("selected-file");
+        const uploadForm = document.querySelector("[data-upload-form]");
+
+        if (fileInput && selectedFile) {
+            fileInput.addEventListener("change", () => {
+                const file = fileInput.files && fileInput.files[0];
+                selectedFile.textContent = file ? `Selected: ${file.name}` : "";
+            });
+        }
+
+        if (uploadForm) {
+            uploadForm.addEventListener("submit", () => {
+                if (!uploadForm.checkValidity()) {
+                    return;
+                }
+
+                const button = uploadForm.querySelector("button[type='submit']");
+                const label = button && button.querySelector(".button-label");
+
+                if (button) {
+                    button.disabled = true;
+                    button.setAttribute("aria-busy", "true");
+                }
+
+                if (label && button.dataset.busyLabel) {
+                    label.textContent = button.dataset.busyLabel;
+                }
+            });
+        }
+
+        const workflowSteps = document.querySelectorAll(".workflow > .workflow-step");
+
+        workflowSteps.forEach((step) => {
+            step.addEventListener("toggle", () => {
+                if (!step.open) {
+                    return;
+                }
+
+                workflowSteps.forEach((otherStep) => {
+                    if (otherStep !== step) {
+                        otherStep.open = false;
+                    }
+                });
+            });
+        });
+
+        const questionForm = document.getElementById("question-form");
+        const questionInput = document.getElementById("question");
+        const askButton = document.getElementById("ask-question");
+        const askLabel = askButton && askButton.querySelector(".button-label");
+        const cancelButton = document.getElementById("cancel-question");
+        const questionStatus = document.getElementById("question-status");
+        let questionController = null;
+
+        const resetQuestionForm = () => {
+            questionController = null;
+            questionInput.disabled = false;
+            askButton.disabled = false;
+            askButton.removeAttribute("aria-busy");
+            askLabel.textContent = "Ask question";
+            cancelButton.hidden = true;
+        };
+
+        if (
+            questionForm &&
+            questionInput &&
+            askButton &&
+            askLabel &&
+            cancelButton &&
+            questionStatus
+        ) {
+            questionForm.addEventListener("submit", async (event) => {
+                event.preventDefault();
+
+                if (!questionForm.checkValidity() || questionController) {
+                    return;
+                }
+
+                const formData = new FormData(questionForm);
+                questionController = new AbortController();
+                questionInput.disabled = true;
+                askButton.disabled = true;
+                askButton.setAttribute("aria-busy", "true");
+                askLabel.textContent = askButton.dataset.busyLabel;
+                cancelButton.hidden = false;
+                questionStatus.textContent = "Finding an answer…";
+
+                try {
+                    const response = await fetch(questionForm.action, {
+                        method: "POST",
+                        body: formData,
+                        signal: questionController.signal,
+                    });
+                    const html = await response.text();
+
+                    document.open();
+                    document.write(html);
+                    document.close();
+                } catch (error) {
+                    if (error.name === "AbortError") {
+                        questionStatus.textContent =
+                            "Request cancelled. Your document is still ready.";
+                    } else {
+                        questionStatus.textContent = "Something went wrong. Please try again.";
+                    }
+                    resetQuestionForm();
+                    questionInput.focus();
+                }
+            });
+
+            cancelButton.addEventListener("click", () => {
+                if (questionController) {
+                    questionController.abort();
+                }
+            });
+        }
+    </script>
 </body>
 </html>

@@ -147,9 +147,7 @@ class _QwenLoraRuntime:
             )
             model.eval()
         except Exception as exc:
-            raise RAGGenerationError(
-                "Could not load the pinned Qwen base model and financial LoRA adapter."
-            ) from exc
+            raise RAGGenerationError("The assistant could not start. Please try again.") from exc
 
         self._tokenizer = tokenizer
         self._model = model
