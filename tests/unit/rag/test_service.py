@@ -105,6 +105,8 @@ def test_service_indexes_retrieves_prompts_generates_and_cites() -> None:
     assert answer.citations[0].chunk_id == "chunk:revenue"
     assert answer.citations[0].page_label == "3"
     assert "Revenue was $100." in generator.prompts[0].messages[1].content
+    assert dict(service.technical_configuration)["Retrieval"] == "Hybrid BM25 + dense RRF"
+    assert dict(service.technical_configuration)["Top results"] == "1"
 
 
 def test_question_requires_an_index() -> None:

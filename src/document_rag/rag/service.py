@@ -140,6 +140,22 @@ class RAGService:
         with self._lock:
             return self._chunks
 
+    @property
+    def technical_configuration(self) -> tuple[tuple[str, str], ...]:
+        """Return immutable display values for opt-in runtime diagnostics."""
+
+        return (
+            ("Retrieval", "Hybrid BM25 + dense RRF"),
+            ("Embedding model", self._config.embedding_model_id),
+            ("Embedding revision", self._config.embedding_model_revision or "Unpinned"),
+            ("Base model", self._config.base_model_id),
+            ("Base revision", self._config.base_model_revision),
+            ("Adapter", self._config.adapter_model_id),
+            ("Adapter revision", self._config.adapter_model_revision or "Unpinned"),
+            ("Top results", str(self._config.top_k)),
+            ("Candidate pool", str(self._config.candidate_k)),
+        )
+
     def index_document(self, chunks: Iterable[DocumentChunk]) -> None:
         """Atomically replace the current index with one uploaded document."""
 

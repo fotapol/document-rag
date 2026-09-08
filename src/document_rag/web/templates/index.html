@@ -88,6 +88,8 @@
         .site-header {
             display: flex;
             align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
             min-height: 68px;
             border-bottom: 1px solid var(--line);
         }
@@ -109,6 +111,18 @@
             border-radius: 9px;
             color: var(--accent-strong);
             background: var(--surface);
+        }
+
+        .privacy-summary {
+            max-width: 490px;
+            margin: 0;
+            color: var(--text-soft);
+            font-size: 0.76rem;
+            text-align: right;
+        }
+
+        .privacy-summary strong {
+            color: #cbd4f5;
         }
 
         main {
@@ -241,6 +255,22 @@
             background: var(--accent-soft);
         }
 
+        .summary-action {
+            min-height: 32px;
+            padding: 0.35rem 0.6rem;
+            border: 1px solid rgb(117 150 255 / 34%);
+            border-radius: 8px;
+            color: #c5d0f8;
+            background: var(--accent-soft);
+            font-size: 0.72rem;
+            font-weight: 750;
+        }
+
+        .summary-action:hover {
+            border-color: var(--accent);
+            background: rgb(117 150 255 / 18%);
+        }
+
         .chevron {
             color: var(--text-soft);
             transition: transform 160ms ease;
@@ -332,6 +362,7 @@
             color: #091025;
             background: var(--accent);
             font-weight: 760;
+            text-decoration: none;
             transition: border-color 150ms ease, background 150ms ease;
         }
 
@@ -343,6 +374,17 @@
         .button:disabled {
             cursor: not-allowed;
             opacity: 0.58;
+        }
+
+        .button-secondary {
+            border-color: var(--line-strong);
+            color: var(--text);
+            background: transparent;
+        }
+
+        .button-secondary:hover {
+            border-color: #626b7d;
+            background: var(--surface-soft);
         }
 
         .button-cancel {
@@ -435,6 +477,7 @@
         }
 
         .citation {
+            appearance: none;
             padding: 0.45rem 0.65rem;
             border: 1px solid var(--line);
             border-radius: 8px;
@@ -443,8 +486,191 @@
             font-size: 0.78rem;
         }
 
+        .citation:hover {
+            border-color: var(--accent);
+            color: var(--text);
+            background: var(--accent-soft);
+        }
+
         .citation strong {
             color: #bdc9f8;
+        }
+
+        body:has(dialog[open]) {
+            overflow: hidden;
+        }
+
+        .drawer {
+            width: 100%;
+            max-width: none;
+            height: 100%;
+            max-height: none;
+            margin: 0;
+            padding: 0;
+            border: 0;
+            color: var(--text);
+            background: transparent;
+        }
+
+        .drawer::backdrop {
+            background: rgb(2 4 8 / 72%);
+            backdrop-filter: blur(3px);
+        }
+
+        .drawer-panel {
+            width: min(680px, 100%);
+            height: 100%;
+            margin-left: auto;
+            overflow-y: auto;
+            border-left: 1px solid var(--line-strong);
+            background: var(--surface-raised);
+            box-shadow: -18px 0 50px rgb(0 0 0 / 35%);
+        }
+
+        .drawer-header {
+            position: sticky;
+            z-index: 1;
+            top: 0;
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 1rem;
+            padding: 1.15rem 1.25rem;
+            border-bottom: 1px solid var(--line);
+            background: rgb(24 28 37 / 96%);
+            backdrop-filter: blur(12px);
+        }
+
+        .drawer-header h2,
+        .drawer-header p {
+            margin-bottom: 0;
+        }
+
+        .drawer-header h2 {
+            font-size: 1.1rem;
+        }
+
+        .drawer-header p {
+            color: var(--text-soft);
+            font-size: 0.78rem;
+        }
+
+        .icon-button {
+            display: grid;
+            flex: 0 0 auto;
+            width: 36px;
+            height: 36px;
+            place-items: center;
+            border: 1px solid var(--line-strong);
+            border-radius: 9px;
+            color: var(--text-soft);
+            background: var(--surface-soft);
+            font-size: 1.2rem;
+        }
+
+        .icon-button:hover {
+            color: var(--text);
+            border-color: #626b7d;
+        }
+
+        .drawer-content {
+            padding: 1.25rem;
+        }
+
+        .drawer-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.6rem;
+            margin-bottom: 1rem;
+        }
+
+        .drawer-section + .drawer-section {
+            margin-top: 1.25rem;
+            padding-top: 1.25rem;
+            border-top: 1px solid var(--line);
+        }
+
+        .drawer-section h3 {
+            margin: 0 0 0.75rem;
+            font-size: 0.9rem;
+        }
+
+        .technical-details {
+            margin-top: 1rem;
+            border-top: 1px solid var(--line);
+        }
+
+        .technical-details > summary {
+            padding: 0.85rem 0;
+            color: var(--text-soft);
+            font-size: 0.82rem;
+            font-weight: 700;
+        }
+
+        .technical-details[open] > summary {
+            color: var(--accent-strong);
+        }
+
+        .metadata {
+            display: grid;
+            grid-template-columns: max-content minmax(0, 1fr);
+            gap: 0.3rem 0.8rem;
+            margin: 0;
+            font-size: 0.76rem;
+        }
+
+        .metadata dt {
+            color: var(--text-soft);
+        }
+
+        .metadata dd {
+            min-width: 0;
+            margin: 0;
+            overflow-wrap: anywhere;
+        }
+
+        code,
+        pre {
+            font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+        }
+
+        pre {
+            max-height: 360px;
+            margin: 0;
+            overflow: auto;
+            padding: 0.85rem;
+            border: 1px solid var(--line);
+            border-radius: 9px;
+            color: #c8ced9;
+            background: #090b0f;
+            font-size: 0.74rem;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
+
+        .technical-item {
+            padding: 0.85rem;
+            border: 1px solid var(--line);
+            border-radius: 9px;
+            background: var(--surface-soft);
+        }
+
+        .technical-item + .technical-item {
+            margin-top: 0.65rem;
+        }
+
+        .technical-item-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            margin-bottom: 0.65rem;
+            font-size: 0.78rem;
+        }
+
+        .technical-item-header span {
+            color: var(--text-soft);
         }
 
         .model-notice {
@@ -462,6 +688,17 @@
         }
 
         @media (max-width: 600px) {
+            .site-header {
+                align-items: flex-start;
+                flex-direction: column;
+                justify-content: center;
+                padding-block: 0.75rem;
+            }
+
+            .privacy-summary {
+                text-align: left;
+            }
+
             main {
                 padding-top: 2.2rem;
             }
@@ -474,6 +711,17 @@
                 display: none;
             }
 
+            .summary-action {
+                grid-row: 2;
+                grid-column: 2;
+                justify-self: start;
+            }
+
+            .chevron {
+                grid-row: 1;
+                grid-column: 3;
+            }
+
             .question-row {
                 grid-template-columns: 1fr;
             }
@@ -482,6 +730,11 @@
             .upload-form > .button,
             .button-row .button {
                 width: 100%;
+            }
+
+            .drawer-panel {
+                width: 100%;
+                border-left: 0;
             }
         }
 
@@ -507,6 +760,10 @@
             </span>
             <span>Document RAG</span>
         </div>
+        <p class="privacy-summary">
+            <strong>Private document chat.</strong>
+            Retrieval and answering run locally; PDFs are sent to LlamaParse for parsing.
+        </p>
     </header>
 
     <main>
@@ -536,9 +793,19 @@
                             {% if document %}{{ document.filename }}{% else %}Choose a financial PDF{% endif %}
                         </span>
                     </span>
-                    <span class="step-state {% if document %}ready{% endif %}">
-                        {% if document %}Ready{% else %}Start{% endif %}
-                    </span>
+                    {% if document %}
+                    <button
+                        class="summary-action"
+                        type="button"
+                        data-open-dialog="document-details"
+                        aria-haspopup="dialog"
+                        aria-controls="document-details"
+                    >
+                        View parsed document
+                    </button>
+                    {% else %}
+                    <span class="step-state">Start</span>
+                    {% endif %}
                     <span class="chevron" aria-hidden="true">⌄</span>
                 </summary>
                 <div class="step-content">
@@ -640,17 +907,215 @@
                         <h2 class="section-title">Sources</h2>
                         <ol class="citations">
                             {% for citation in answer.citations %}
-                            <li class="citation">
-                                <strong>Source {{ citation.source_number }}</strong>
-                                · Page {{ citation.page_label }}
+                            <li>
+                                <button
+                                    class="citation"
+                                    type="button"
+                                    data-open-dialog="source-{{ citation.source_number }}"
+                                    aria-haspopup="dialog"
+                                    aria-controls="source-{{ citation.source_number }}"
+                                >
+                                    <strong>Source {{ citation.source_number }}</strong>
+                                    · Page {{ citation.page_label }}
+                                </button>
                             </li>
                             {% endfor %}
                         </ol>
+
+                        {% for citation in answer.citations %}
+                        {% set result = answer.retrieved[loop.index0] %}
+                        <dialog
+                            class="drawer"
+                            id="source-{{ citation.source_number }}"
+                            aria-labelledby="source-{{ citation.source_number }}-title"
+                        >
+                            <div class="drawer-panel">
+                                <header class="drawer-header">
+                                    <div>
+                                        <h2 id="source-{{ citation.source_number }}-title">
+                                            Source {{ citation.source_number }} · Page {{ citation.page_label }}
+                                        </h2>
+                                        <p>Supporting text used to answer your question</p>
+                                    </div>
+                                    <button
+                                        class="icon-button"
+                                        type="button"
+                                        data-close-dialog
+                                        aria-label="Close source"
+                                    >
+                                        ×
+                                    </button>
+                                </header>
+                                <div class="drawer-content">
+                                    <div class="drawer-actions">
+                                        <a
+                                            class="button button-secondary"
+                                            href="/documents/current.pdf#page={{ citation.page_start }}"
+                                            target="_blank"
+                                            rel="noopener"
+                                        >
+                                            Open original PDF at page {{ citation.page_start }}
+                                        </a>
+                                    </div>
+
+                                    <pre>{{ result.chunk.text }}</pre>
+
+                                    <details class="technical-details">
+                                        <summary>Technical details</summary>
+                                        <dl class="metadata">
+                                            <dt>Chunk ID</dt>
+                                            <dd><code>{{ result.chunk_id }}</code></dd>
+                                            <dt>Page range</dt>
+                                            <dd>{{ citation.page_label }}</dd>
+                                            <dt>Retrieval score</dt>
+                                            <dd>{{ "%.8f" | format(result.score) }}</dd>
+                                            <dt>Result rank</dt>
+                                            <dd>{{ result.rank }}</dd>
+                                            {% if result.bm25_rank is defined %}
+                                            <dt>BM25 rank</dt>
+                                            <dd>{{ result.bm25_rank or "Not retrieved" }}</dd>
+                                            {% endif %}
+                                            {% if result.dense_rank is defined %}
+                                            <dt>Dense rank</dt>
+                                            <dd>{{ result.dense_rank or "Not retrieved" }}</dd>
+                                            {% endif %}
+                                            {% if result.chunk.parent_chunk_id %}
+                                            <dt>Parent chunk</dt>
+                                            <dd><code>{{ result.chunk.parent_chunk_id }}</code></dd>
+                                            {% endif %}
+                                            <dt>Source elements</dt>
+                                            <dd>
+                                                {% for source_id in result.chunk.source_element_ids %}
+                                                <code>{{ source_id }}</code>{% if not loop.last %}<br>{% endif %}
+                                                {% endfor %}
+                                            </dd>
+                                        </dl>
+                                    </details>
+                                </div>
+                            </div>
+                        </dialog>
+                        {% endfor %}
                     </section>
                     {% endif %}
                 </div>
             </details>
         </section>
+
+        {% if document %}
+        <dialog class="drawer" id="document-details" aria-labelledby="document-details-title">
+            <div class="drawer-panel">
+                <header class="drawer-header">
+                    <div>
+                        <h2 id="document-details-title">{{ document.filename }}</h2>
+                        <p>Parsed document and optional technical information</p>
+                    </div>
+                    <button
+                        class="icon-button"
+                        type="button"
+                        data-close-dialog
+                        aria-label="Close parsed document"
+                    >
+                        ×
+                    </button>
+                </header>
+                <div class="drawer-content">
+                    <div class="drawer-actions">
+                        <a
+                            class="button button-secondary"
+                            href="/documents/current.pdf"
+                            target="_blank"
+                            rel="noopener"
+                        >
+                            Open original PDF
+                        </a>
+                        <button
+                            class="button button-secondary"
+                            id="download-chunks"
+                            type="button"
+                            data-filename="chunks-{{ document.sha256[:12] }}.jsonl"
+                        >
+                            Download chunks as JSONL
+                        </button>
+                    </div>
+                    <textarea id="chunks-jsonl" hidden>{{ chunks_jsonl }}</textarea>
+
+                    <section class="drawer-section" aria-labelledby="document-overview-title">
+                        <h3 id="document-overview-title">Document overview</h3>
+                        <dl class="metadata">
+                            <dt>Pages</dt>
+                            <dd>{{ document.pages | length }}</dd>
+                            <dt>Chunks</dt>
+                            <dd>{{ chunks | length }}</dd>
+                            <dt>Document ID</dt>
+                            <dd><code>{{ document.document_id }}</code></dd>
+                            <dt>SHA-256</dt>
+                            <dd><code>{{ document.sha256 }}</code></dd>
+                        </dl>
+                    </section>
+
+                    <details class="technical-details" open>
+                        <summary>Parsed pages</summary>
+                        {% for page in document.pages %}
+                        <article class="technical-item">
+                            <div class="technical-item-header">
+                                <strong>Page {{ page.page_number }}</strong>
+                                <span>Parsed Markdown</span>
+                            </div>
+                            <pre>{{ page.markdown }}</pre>
+                        </article>
+                        {% endfor %}
+                    </details>
+
+                    <details class="technical-details">
+                        <summary>Index and model configuration</summary>
+                        {% if technical_configuration %}
+                        <dl class="metadata">
+                            {% for label, value in technical_configuration %}
+                            <dt>{{ label }}</dt>
+                            <dd><code>{{ value }}</code></dd>
+                            {% endfor %}
+                        </dl>
+                        {% else %}
+                        <p class="helper">Runtime configuration is unavailable for this session.</p>
+                        {% endif %}
+                    </details>
+
+                    <details class="technical-details">
+                        <summary>Indexed chunks · {{ chunks | length }}</summary>
+                        {% for chunk in chunks %}
+                        <article class="technical-item">
+                            <div class="technical-item-header">
+                                <strong>Chunk {{ chunk.chunk_index }}</strong>
+                                <span>Page {{ chunk.page_start }}{% if chunk.page_end != chunk.page_start %}–{{ chunk.page_end }}{% endif %}</span>
+                            </div>
+                            <dl class="metadata">
+                                <dt>Chunk ID</dt>
+                                <dd><code>{{ chunk.chunk_id }}</code></dd>
+                                <dt>Characters</dt>
+                                <dd>{{ chunk.char_count }}</dd>
+                                <dt>Tokens</dt>
+                                <dd>{{ chunk.token_count }}</dd>
+                                <dt>Blocks</dt>
+                                <dd>{{ chunk.block_count }}</dd>
+                                {% if chunk.parent_chunk_id %}
+                                <dt>Parent chunk</dt>
+                                <dd><code>{{ chunk.parent_chunk_id }}</code></dd>
+                                {% endif %}
+                                <dt>Source elements</dt>
+                                <dd>
+                                    {% for source_id in chunk.source_element_ids %}
+                                    <code>{{ source_id }}</code>{% if not loop.last %}<br>{% endif %}
+                                    {% endfor %}
+                                </dd>
+                            </dl>
+                            <pre>{{ chunk.text }}</pre>
+                        </article>
+                        {% endfor %}
+                    </details>
+                </div>
+            </div>
+        </dialog>
+        {% endif %}
 
         <p class="model-notice">Model can make mistakes. Check important info.</p>
     </main>
@@ -658,6 +1123,7 @@
     <footer class="site-footer">Document RAG</footer>
 
     <script>
+        (() => {
         "use strict";
 
         const fileInput = document.getElementById("file");
@@ -715,6 +1181,21 @@
         const questionStatus = document.getElementById("question-status");
         let questionController = null;
 
+        const renderHtmlResponse = (html) => {
+            const nextDocument = new DOMParser().parseFromString(html, "text/html");
+
+            document.title = nextDocument.title;
+            document.head.replaceWith(nextDocument.head);
+            document.body.replaceWith(nextDocument.body);
+
+            document.querySelectorAll("script").forEach((script) => {
+                const replacement = document.createElement("script");
+
+                replacement.textContent = script.textContent;
+                script.replaceWith(replacement);
+            });
+        };
+
         const resetQuestionForm = () => {
             questionController = null;
             questionInput.disabled = false;
@@ -756,9 +1237,7 @@
                     });
                     const html = await response.text();
 
-                    document.open();
-                    document.write(html);
-                    document.close();
+                    renderHtmlResponse(html);
                 } catch (error) {
                     if (error.name === "AbortError") {
                         questionStatus.textContent =
@@ -777,6 +1256,58 @@
                 }
             });
         }
+
+        document.querySelectorAll("[data-open-dialog]").forEach((button) => {
+            button.addEventListener("click", (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                const dialog = document.getElementById(button.dataset.openDialog);
+
+                if (dialog instanceof HTMLDialogElement) {
+                    dialog.showModal();
+                }
+            });
+        });
+
+        document.querySelectorAll("[data-close-dialog]").forEach((button) => {
+            button.addEventListener("click", () => {
+                const dialog = button.closest("dialog");
+
+                if (dialog instanceof HTMLDialogElement) {
+                    dialog.close();
+                }
+            });
+        });
+
+        document.querySelectorAll("dialog.drawer").forEach((dialog) => {
+            dialog.addEventListener("click", (event) => {
+                if (event.target === dialog) {
+                    dialog.close();
+                }
+            });
+        });
+
+        const downloadButton = document.getElementById("download-chunks");
+        const chunksJsonl = document.getElementById("chunks-jsonl");
+
+        if (downloadButton && chunksJsonl) {
+            downloadButton.addEventListener("click", () => {
+                const blob = new Blob(
+                    [chunksJsonl.value],
+                    {type: "application/x-ndjson;charset=utf-8"},
+                );
+                const objectUrl = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+
+                link.href = objectUrl;
+                link.download = downloadButton.dataset.filename;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                URL.revokeObjectURL(objectUrl);
+            });
+        }
+        })();
     </script>
 </body>
 </html>

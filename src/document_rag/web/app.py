@@ -5,9 +5,10 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from typing import Annotated, Protocol, cast
+from urllib.parse import quote
 
-from fastapi import FastAPI, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 
@@ -30,7 +31,7 @@ from document_rag.rag.errors import (
     RAGNotIndexedError,
 )
 from document_rag.rag.models import RAGAnswer
-from document_rag.rag.service import build_default_rag_service
+from document_rag.rag.service import RAGService, build_default_rag_service
 
 LOGGER = logging.getLogger(__name__)
 
@@ -93,6 +94,8 @@ def create_app(
     app.state.question_answering_service = question_answering_service
     app.state.current_document = None
     app.state.current_chunks = ()
+    app.state.current_pdf_content = None
+    app.state.current_pdf_filename = None
 
     @app.get("/health")
     async def health() -> JSONResponse:
@@ -104,9 +107,34 @@ def create_app(
     async def index(request: Request) -> HTMLResponse:
         """Render the PDF upload page."""
 
+        document, chunks = get_current_document(request)
         return render_result(
             request,
+            document=document,
+            chunks=chunks,
+            chunks_jsonl=chunks_to_jsonl(chunks),
             status_code=200,
+        )
+
+    @app.get("/documents/current.pdf", response_class=Response)
+    async def current_pdf(request: Request) -> Response:
+        """Return the current session PDF for page-level citation links."""
+
+        content = cast(bytes | None, request.app.state.current_pdf_content)
+        filename = cast(str | None, request.app.state.current_pdf_filename)
+
+        if content is None or filename is None:
+            raise HTTPException(status_code=404, detail="No document is currently available.")
+
+        encoded_filename = quote(filename, safe="")
+        return Response(
+            content=content,
+            media_type="application/pdf",
+            headers={
+                "Cache-Control": "no-store",
+                "Content-Disposition": f"inline; filename*=UTF-8''{encoded_filename}",
+                "X-Content-Type-Options": "nosniff",
+            },
         )
 
     @app.post("/documents/parse", response_class=HTMLResponse)
@@ -116,11 +144,16 @@ def create_app(
     ) -> HTMLResponse:
         """Validate, parse, chunk, and render one uploaded PDF."""
 
+        current_document, current_chunks = get_current_document(request)
+        current_chunks_jsonl = chunks_to_jsonl(current_chunks)
         error = validate_upload_metadata(file)
 
         if error is not None:
             return render_result(
                 request,
+                document=current_document,
+                chunks=current_chunks,
+                chunks_jsonl=current_chunks_jsonl,
                 error=error,
                 status_code=400,
             )
@@ -130,6 +163,9 @@ def create_app(
         if content is None:
             return render_result(
                 request,
+                document=current_document,
+                chunks=current_chunks,
+                chunks_jsonl=current_chunks_jsonl,
                 error=(
                     f"The uploaded file exceeds the {MAX_UPLOAD_BYTES // 1024 // 1024} MB limit."
                 ),
@@ -139,6 +175,9 @@ def create_app(
         if not content.startswith(b"%PDF-"):
             return render_result(
                 request,
+                document=current_document,
+                chunks=current_chunks,
+                chunks_jsonl=current_chunks_jsonl,
                 error="The uploaded file is not a valid PDF.",
                 status_code=400,
             )
@@ -166,6 +205,9 @@ def create_app(
         ) as exc:
             return render_result(
                 request,
+                document=current_document,
+                chunks=current_chunks,
+                chunks_jsonl=current_chunks_jsonl,
                 error=str(exc),
                 status_code=503,
             )
@@ -181,6 +223,9 @@ def create_app(
             )
             return render_result(
                 request,
+                document=current_document,
+                chunks=current_chunks,
+                chunks_jsonl=current_chunks_jsonl,
                 error=str(exc),
                 status_code=502,
             )
@@ -191,12 +236,17 @@ def create_app(
             )
             return render_result(
                 request,
+                document=current_document,
+                chunks=current_chunks,
+                chunks_jsonl=current_chunks_jsonl,
                 error="Unexpected document processing failure.",
                 status_code=502,
             )
 
         request.app.state.current_document = document
         request.app.state.current_chunks = chunks
+        request.app.state.current_pdf_content = content
+        request.app.state.current_pdf_filename = document.filename
 
         return render_result(
             request,
@@ -382,6 +432,12 @@ def render_result(
 ) -> HTMLResponse:
     """Render the upload page, processing result, or user-facing error."""
 
+    question_answering = request.app.state.question_answering_service
+    technical_configuration: tuple[tuple[str, str], ...] = ()
+
+    if isinstance(question_answering, RAGService):
+        technical_configuration = question_answering.technical_configuration
+
     return TEMPLATES.TemplateResponse(
         request=request,
         name="index.html",
@@ -393,6 +449,7 @@ def render_result(
             "question": question,
             "answer": answer,
             "max_upload_mb": MAX_UPLOAD_BYTES // 1024 // 1024,
+            "technical_configuration": technical_configuration,
         },
         status_code=status_code,
     )
