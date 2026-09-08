@@ -82,9 +82,12 @@ cases isolate generator quality and must not be presented as end-to-end producti
 
 ## Metrics
 
-The evaluator does not use the old “first number” heuristic. Every expected numeric value may
-appear anywhere in an answer, so a correct explanation containing operands and a final result can
-pass. Decimal formatting and thousands separators are normalized.
+The evaluator does not use the old “first number” heuristic. When an answer contains an explicit
+`the answer is` clause, only numbers in that final-answer clause can satisfy the expected value.
+For worked arithmetic without that clause, numbers after the final equals sign are used. This
+prevents an input operand from hiding a wrong final result. Free-form scalar answers remain
+scoreable, and signs, leading decimals, decimal formatting, and thousands separators are preserved.
+Expected phrases use word boundaries, so an expected `no` cannot match inside `cannot`.
 
 Each model receives separate metrics for:
 

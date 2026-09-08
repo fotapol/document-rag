@@ -95,7 +95,7 @@ def test_cli_exports_rag_aligned_training_data(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The v2 command should pass retrieval policy and report audit counters."""
+    """The RAG command should pass generation policy and report audit counters."""
 
     captured_arguments: dict[str, Any] = {}
 
@@ -108,9 +108,13 @@ def test_cli_exports_rag_aligned_training_data(
                     record_count=100,
                     supported_count=80,
                     refusal_count=20,
+                    calculation_supervised_count=50,
+                    context_trimmed_count=7,
                     oracle_augmented_count=12,
                     ambiguous_unit_exclusion_count=3,
                     gold_source_overflow_exclusion_count=2,
+                    sequence_overflow_exclusion_count=1,
+                    max_sequence_token_count=4090,
                     path=Path("rag-training/train.jsonl"),
                 ),
             ),
@@ -144,13 +148,18 @@ def test_cli_exports_rag_aligned_training_data(
     assert captured_arguments["export_config"].refusal_ratio == 0.2
     assert captured_arguments["export_config"].oracle_augment is True
     assert captured_arguments["export_config"].document_resplit is True
+    assert captured_arguments["export_config"].max_sequence_tokens == 4096
     assert captured_arguments["rag_config"].top_k == 5
 
     output = capsys.readouterr().out
     assert "80 supported, 20 refusals" in output
+    assert "50 calculation supervised" in output
+    assert "7 context trimmed" in output
     assert "12 oracle augmented" in output
     assert "3 ambiguous-unit exclusions" in output
     assert "2 gold-source overflow exclusions" in output
+    assert "1 sequence overflow exclusions" in output
+    assert "max 4090 tokens" in output
 
 
 def test_cli_reports_rag_training_policy_error(

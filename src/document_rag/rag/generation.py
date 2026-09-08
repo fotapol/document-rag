@@ -123,9 +123,14 @@ class _QwenLoraRuntime:
             from peft import PeftModel
             from transformers import AutoModelForCausalLM, AutoTokenizer
 
+            adapter_revision: dict[str, Any] = (
+                {}
+                if self._config.adapter_model_revision is None
+                else {"revision": self._config.adapter_model_revision}
+            )
             tokenizer = AutoTokenizer.from_pretrained(
-                self._config.base_model_id,
-                revision=self._config.base_model_revision,
+                self._config.adapter_model_id,
+                **adapter_revision,
             )
             base_model = AutoModelForCausalLM.from_pretrained(
                 self._config.base_model_id,
@@ -134,19 +139,12 @@ class _QwenLoraRuntime:
                 device_map=self._config.generation_device_map,
             )
 
-            if self._config.adapter_model_revision is None:
-                model = PeftModel.from_pretrained(
-                    base_model,
-                    self._config.adapter_model_id,
-                    is_trainable=False,
-                )
-            else:
-                model = PeftModel.from_pretrained(
-                    base_model,
-                    self._config.adapter_model_id,
-                    revision=self._config.adapter_model_revision,
-                    is_trainable=False,
-                )
+            model = PeftModel.from_pretrained(
+                base_model,
+                self._config.adapter_model_id,
+                is_trainable=False,
+                **adapter_revision,
+            )
             model.eval()
         except Exception as exc:
             raise RAGGenerationError(

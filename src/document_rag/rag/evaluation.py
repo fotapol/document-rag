@@ -40,7 +40,8 @@ _CASE_CATEGORIES: tuple[RAGCaseCategory, ...] = (
     "reasoning",
     "unsupported",
 )
-_NUMBER_PATTERN = re.compile(r"(?<![\w.])[-+]?\d[\d,]*(?:\.\d+)?")
+_NUMBER_PATTERN = re.compile(r"(?<![\w.])[-+]?(?:\d[\d,]*(?:\.\d+)?|\.\d+)(?!\w)")
+_ANSWER_MARKER_PATTERN = re.compile(r"\bthe\s+answer\s+is\b", re.IGNORECASE)
 _SOURCE_PATTERN = re.compile(
     r"\[\s*Source\s+(\d+)(?:\s*\]|\s*\|[^\]]*\])",
     re.IGNORECASE,
@@ -409,10 +410,7 @@ def assess_answer(
         for value in expectation.expected_values
     )
     answer_without_source_labels = _SOURCE_PATTERN.sub("", normalized_answer)
-    answer_numbers = tuple(
-        _parse_decimal(match.group(0), label="Generated numeric value")
-        for match in _NUMBER_PATTERN.finditer(answer_without_source_labels)
-    )
+    answer_numbers = _answer_numbers(answer_without_source_labels)
     numeric_correct = (
         all(expected in answer_numbers for expected in expected_numbers)
         if expected_numbers
@@ -425,7 +423,8 @@ def assess_answer(
         else None
     )
     phrases_correct = all(
-        _normalize_text(phrase) in normalized_text for phrase in expectation.expected_phrases
+        _contains_normalized_phrase(normalized_text, phrase)
+        for phrase in expectation.expected_phrases
     )
     cited_sources = tuple(
         dict.fromkeys(int(match.group(1)) for match in _SOURCE_PATTERN.finditer(normalized_answer))
@@ -731,6 +730,43 @@ def _parse_decimal(value: str, *, label: str) -> Decimal:
 
 def _normalize_text(value: str) -> str:
     return _WHITESPACE_PATTERN.sub(" ", value).strip().casefold()
+
+
+def _answer_numbers(value: str) -> tuple[Decimal, ...]:
+    """Extract numbers from the model's explicit or trailing calculation result.
+
+    When the model writes ``the answer is``, operands before that marker cannot satisfy
+    the expected value. An equals sign receives the same treatment for worked arithmetic.
+    Free-form scalar answers without either marker retain all of their numbers so ordinary
+    sentences such as ``Revenue was $14.1 million`` remain scoreable.
+    """
+
+    marker_matches = tuple(_ANSWER_MARKER_PATTERN.finditer(value))
+
+    if marker_matches:
+        candidate = value[marker_matches[-1].end() :]
+    elif "=" in value:
+        candidate = value.rsplit("=", 1)[1]
+    else:
+        candidate = value
+
+    return tuple(
+        _parse_decimal(match.group(0), label="Generated numeric value")
+        for match in _NUMBER_PATTERN.finditer(candidate)
+    )
+
+
+def _contains_normalized_phrase(normalized_text: str, phrase: str) -> bool:
+    """Match a required phrase without accepting substrings inside larger words."""
+
+    normalized_phrase = _normalize_text(phrase)
+    return (
+        re.search(
+            rf"(?<!\w){re.escape(normalized_phrase)}(?!\w)",
+            normalized_text,
+        )
+        is not None
+    )
 
 
 def _require_mapping(value: object, *, label: str) -> Mapping[str, object]:

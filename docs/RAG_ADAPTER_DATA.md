@@ -1,11 +1,11 @@
-# RAG-aligned adapter-v2 data
+# RAG-aligned adapter data
 
 The original training exporter intentionally reproduces the FinQA and DocFinQA benchmark shape:
 gold facts are rendered as an unlabeled context and the assistant returns only the reference answer.
 That format is useful for reproducing adapter v1, but it teaches outputs such as `14.1` rather than
 the grounded application response `$14.1 million. [Source 2]`.
 
-The `training export-rag` command is a separate schema-v2 pipeline for adapter v2. It leaves the
+The `training export-rag` command is a separate schema-v5 pipeline for the next adapter. It leaves the
 legacy exporter unchanged and reuses the production RAG prompt, table-row representation, hybrid
 retrieval factory, source lineage, and diversity configuration.
 
@@ -20,6 +20,7 @@ prepared FinQA + prepared DocFinQA
 -> supported, oracle-augmented, or refusal example
 -> conservative unit reconstruction
 -> production system/user messages + assistant target
+-> exact Qwen chat-template token count and non-gold context trimming
 -> deterministic split JSONL + manifest
 ```
 
@@ -37,8 +38,16 @@ Oracle augmentation is explicit because generator supervision must never pair an
 context that cannot support it. It is not evidence that production retrieval succeeded. Use the
 `oracle_augmented_count` in the manifest as a retrieval-quality diagnostic.
 
+An oracle-injected chunk is placed at a deterministic hash-derived source position instead of
+always being appended. The hash uses the dataset, example, and chunk identities, so exports remain
+byte-identical while injected evidence is distributed across available positions. Real retrieved
+contexts retain their original ranking. Each record audits synthetic evidence through
+`oracle_injected_chunk_ids` and `oracle_injected_source_numbers`; the manifest reports
+`oracle_injected_source_position_counts` by split.
+
 The assistant target contains:
 
+- a visible, normalized calculation program when the dataset supplies one;
 - the reference answer or available reference explanation;
 - preserved or conservatively inferred units;
 - every `[Source N]` label whose chunk carries gold source-element lineage.
@@ -52,16 +61,36 @@ Example:
   "context_mode": "oracle_augmented",
   "expected_units": ["$", "million"],
   "gold_source_numbers": [1],
+  "oracle_injected_source_numbers": [1],
   "messages": [
     {"role": "system", "content": "<the exact production system instruction>"},
     {"role": "user", "content": "Retrieved context:\n\n[Source 1 | page 1 | chunk_id ...]\n...\n\nQuestion:\n..."},
-    {"role": "assistant", "content": "The answer is $20 million. [Source 1]"}
+    {"role": "assistant", "content": "Calculation:\nsubtract(120, 100)\nThe answer is $20 million. [Source 1]"}
   ]
 }
 ```
 
-`reasoning_program` is retained as audit metadata but is not inserted into the model prompt. The
-model is supervised on a concise grounded answer, not a long hidden chain of thought.
+When `reasoning_program` is available, it is retained as audit metadata and copied into the
+assistant response under `Calculation:`. This is a short, dataset-provided, auditable calculation
+program rather than hidden chain of thought. Examples without a program retain their concise
+grounded answer or reference explanation. The manifest reports `calculation_supervised_count` for
+each split so this coverage can be reviewed before training.
+
+## Sequence budget
+
+The exporter applies the pinned base model's Qwen chat template to the complete system, user, and
+assistant sequence and enforces `--max-sequence-tokens` (default `4096`). This is the same sequence
+shape consumed during supervised training: thinking is disabled and no generation prompt is added.
+
+If a sequence is too long, the exporter removes the lowest-ranked non-gold retrieval result and
+counts again. It never removes a chunk carrying gold source lineage. Source numbers, chunk IDs,
+citations, and the assistant target are rebuilt after each removal. If the gold context and target
+still cannot fit, the candidate is excluded and recorded under
+`sequence_overflow_exclusion_count`; it must not be silently filtered later in the Kaggle notebook.
+
+Every retained JSONL record contains `sequence_token_count` and `context_trimmed`. Each split in the
+manifest reports `context_trimmed_count`, `sequence_overflow_exclusion_count`, and
+`max_sequence_token_count`.
 
 ## Unit policy
 
@@ -135,15 +164,17 @@ Prepare both normalized datasets first. Then, from the repository root:
 uv run document-rag training export-rag `
   --finqa data/processed/finqa `
   --docfinqa data/processed/docfinqa `
-  --output artifacts/training/rag-adapter-v2 `
-  --refusal-ratio 0.2
+  --output artifacts/training/rag-adapter-v3 `
+  --refusal-ratio 0.2 `
+  --max-sequence-tokens 4096
 ```
 
 The command exports all three deterministic report-level splits by default. It loads
 the pinned BGE embedding model used by the application; it does not load Qwen or require a GPU.
-The first embedding-model download requires Hugging Face access, while later runs can use the local
-cache. `DOCUMENT_RAG_*` values from the environment control retrieval, including top-K, candidate
-depth, model revision, and the table-parent cap.
+The first embedding-model and pinned Qwen-tokenizer downloads require Hugging Face access, while
+later runs can use the local cache. Only the tokenizer is loaded for sequence counting; Qwen model
+weights are not loaded. `DOCUMENT_RAG_*` values from the environment control retrieval, including
+top-K, candidate depth, model revision, and the table-parent cap.
 
 For a quick development run, append `--split train`; the exporter still reads every upstream split
 before selecting the assigned training records. To inspect behavior without oracle augmentation,
@@ -153,7 +184,7 @@ only eligible refusal examples.
 Outputs:
 
 ```text
-artifacts/training/rag-adapter-v2/
+artifacts/training/rag-adapter-v3/
   train.jsonl
   validation.jsonl
   test.jsonl
@@ -169,8 +200,11 @@ Before uploading anything, inspect `manifest.json` and a sample from every split
 
 - supported/refusal ratio;
 - retrieved versus oracle-augmented counts;
+- distribution of oracle-injected source positions;
 - ambiguous-unit exclusions;
 - gold-source overflow exclusions;
+- contexts trimmed to meet the training sequence budget;
+- sequence-overflow exclusions and the largest retained sequence;
 - simple, table, and reasoning category balance;
 - correct units and source labels in assistant targets;
 - exact refusal targets;
@@ -190,9 +224,10 @@ Kaggle should execute training, not own preprocessing logic.
 3. Load the JSONL `messages` field without reconstructing prompts in the notebook.
 4. Apply the pinned Qwen chat template with `add_generation_prompt=False`.
 5. Mask system and user tokens so loss is calculated only on the assistant response.
-6. Train a new adapter ID or revision; never overwrite adapter v1.
-7. Evaluate base, adapter v1, and adapter v2 against identical frozen RAG contexts.
-8. Publish v2 only if grounded accuracy, units, citations, calculations, and refusals meet the
+   Assert that every sequence is within the manifest limit; do not filter records at this stage.
+6. Train a new adapter ID or revision; never overwrite an earlier adapter.
+7. Evaluate the base model and every adapter version against identical frozen RAG contexts.
+8. Publish the new adapter only if grounded accuracy, units, citations, calculations, and refusals meet the
    predeclared acceptance thresholds.
 
 Training is the next milestone after the generated artifacts have been audited and the frozen

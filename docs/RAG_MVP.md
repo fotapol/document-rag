@@ -33,8 +33,9 @@ single-session MVP rather than multi-user persistence.
   ranks.
 - `build_grounded_prompt` labels every context item with its page and deterministic chunk ID. Its
   system instruction requires context-only answers and an explicit unsupported-answer response.
-- `QwenLoraGenerator` lazily loads the pinned base model and attaches the published PEFT adapter
-  with `PeftModel.from_pretrained`. It never calls `merge_and_unload` and uses `do_sample=False`.
+- `QwenLoraGenerator` lazily loads the tokenizer and published PEFT adapter from the same pinned
+  adapter revision, then attaches the adapter to the separately pinned base model with
+  `PeftModel.from_pretrained`. It never calls `merge_and_unload` and uses `do_sample=False`.
 
 The dense embedding model loads during the first successful PDF upload. The Qwen base model and
 LoRA adapter load only when the first question is submitted.
@@ -59,8 +60,8 @@ All settings are optional except `LLAMA_CLOUD_API_KEY` for real PDF parsing.
 | `DOCUMENT_RAG_DENSE_BATCH_SIZE` | `32` |
 | `DOCUMENT_RAG_BASE_MODEL_ID` | `Qwen/Qwen3-1.7B` |
 | `DOCUMENT_RAG_BASE_MODEL_REVISION` | `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e` |
-| `DOCUMENT_RAG_ADAPTER_MODEL_ID` | `fotapol/qwen3-1.7b-financial-qa-lora` |
-| `DOCUMENT_RAG_ADAPTER_MODEL_REVISION` | `8433fcf8142e3db64f38df1f6eeaa38bf2e92651` |
+| `DOCUMENT_RAG_ADAPTER_MODEL_ID` | `fotapol/qwen3-1.7b-financial-rag-lora-v4` |
+| `DOCUMENT_RAG_ADAPTER_MODEL_REVISION` | `d1af458b0bde4c74ccf87e3042ac8bb2390a8c65` |
 | `DOCUMENT_RAG_GENERATION_DEVICE_MAP` | `auto` |
 | `DOCUMENT_RAG_MAX_INPUT_TOKENS` | `4096` |
 | `DOCUMENT_RAG_MAX_NEW_TOKENS` | `128` |
