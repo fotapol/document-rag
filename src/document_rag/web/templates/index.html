@@ -97,20 +97,8 @@
         .brand {
             display: flex;
             align-items: center;
-            gap: 0.65rem;
             font-weight: 760;
             letter-spacing: -0.02em;
-        }
-
-        .brand-mark {
-            display: grid;
-            width: 34px;
-            height: 34px;
-            place-items: center;
-            border: 1px solid var(--line-strong);
-            border-radius: 9px;
-            color: var(--accent-strong);
-            background: var(--surface);
         }
 
         .privacy-summary {
@@ -272,12 +260,32 @@
         }
 
         .chevron {
+            display: grid;
+            width: 28px;
+            height: 28px;
+            place-items: center;
+            border-radius: 7px;
             color: var(--text-soft);
+            transition: color 160ms ease, background 160ms ease;
+        }
+
+        .chevron::before {
+            width: 7px;
+            height: 7px;
+            border-right: 1.5px solid currentColor;
+            border-bottom: 1.5px solid currentColor;
+            content: "";
+            transform: translateY(-2px) rotate(45deg);
             transition: transform 160ms ease;
         }
 
-        .workflow-step[open] > .step-summary .chevron {
-            transform: rotate(180deg);
+        .step-summary:hover .chevron {
+            color: var(--text);
+            background: var(--surface-soft);
+        }
+
+        .workflow-step[open] > .step-summary .chevron::before {
+            transform: translateY(2px) rotate(225deg);
         }
 
         .step-content {
@@ -687,6 +695,17 @@
             text-align: center;
         }
 
+        .site-footer a {
+            color: var(--text-soft);
+            text-decoration-color: rgb(156 165 181 / 45%);
+            text-underline-offset: 0.2em;
+        }
+
+        .site-footer a:hover {
+            color: var(--accent-strong);
+            text-decoration-color: currentColor;
+        }
+
         @media (max-width: 600px) {
             .site-header {
                 align-items: flex-start;
@@ -752,17 +771,10 @@
 <body>
     <header class="site-header">
         <div class="brand" aria-label="Document RAG">
-            <span class="brand-mark" aria-hidden="true">
-                <svg width="19" height="19" viewBox="0 0 24 24" fill="none">
-                    <path d="M6 3.75h8.5L18 7.25v13H6z" stroke="currentColor" stroke-width="1.7"/>
-                    <path d="M14 3.75v4h4M8.8 12h6.4M8.8 15.5h4.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
-                </svg>
-            </span>
             <span>Document RAG</span>
         </div>
         <p class="privacy-summary">
-            <strong>Private document chat.</strong>
-            Retrieval and answering run locally; PDFs are sent to LlamaParse for parsing.
+            <strong>Private chat.</strong> Answers run locally; LlamaParse processes PDFs.
         </p>
     </header>
 
@@ -806,7 +818,7 @@
                     {% else %}
                     <span class="step-state">Start</span>
                     {% endif %}
-                    <span class="chevron" aria-hidden="true">⌄</span>
+                    <span class="chevron" aria-hidden="true"></span>
                 </summary>
                 <div class="step-content">
                     {% if document %}
@@ -853,7 +865,7 @@
                     <span class="step-state {% if document %}ready{% endif %}">
                         {% if document %}Ready{% else %}Waiting{% endif %}
                     </span>
-                    <span class="chevron" aria-hidden="true">⌄</span>
+                    <span class="chevron" aria-hidden="true"></span>
                 </summary>
                 <div class="step-content">
                     <form
@@ -1120,7 +1132,10 @@
         <p class="model-notice">Model can make mistakes. Check important info.</p>
     </main>
 
-    <footer class="site-footer">Document RAG</footer>
+    <footer class="site-footer">
+        Developed by
+        <a href="https://github.com/fotapol" target="_blank" rel="me noopener">fotapol</a>
+    </footer>
 
     <script>
         (() => {

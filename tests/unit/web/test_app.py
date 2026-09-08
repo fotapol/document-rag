@@ -114,9 +114,11 @@ def test_index_renders_accessible_empty_workspace() -> None:
     assert response.status_code == 200
     assert "Ask your document" in response.text
     assert "Upload a PDF to ask a question." in response.text
-    assert "Private document chat." in response.text
-    assert "Retrieval and answering run locally" in response.text
-    assert "PDFs are sent to LlamaParse for parsing" in response.text
+    assert "Private chat." in response.text
+    assert "Answers run locally; LlamaParse processes PDFs." in response.text
+    assert "brand-mark" not in response.text
+    assert 'href="https://github.com/fotapol"' in response.text
+    assert ">fotapol</a>" in response.text
     assert 'aria-label="Application workflow"' in response.text
     assert response.text.count('class="workflow-step"') == 2
     assert 'id="cancel-question"' in response.text
