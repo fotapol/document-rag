@@ -336,6 +336,19 @@
             font-weight: 650;
         }
 
+        .session-actions,
+        .conversation-header,
+        .answer-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+        }
+
+        .session-actions {
+            margin-top: 0.75rem;
+        }
+
         input[type="file"] {
             width: 100%;
             color: var(--text-soft);
@@ -406,6 +419,22 @@
             background: var(--danger-soft);
         }
 
+        .button-compact {
+            min-height: 34px;
+            padding: 0.35rem 0.65rem;
+            font-size: 0.75rem;
+        }
+
+        .button-danger {
+            border-color: rgb(255 133 142 / 40%);
+            color: #ffc0c5;
+        }
+
+        .button-danger:hover {
+            border-color: var(--danger);
+            background: var(--danger-soft);
+        }
+
         .button[aria-busy="true"]::before {
             width: 14px;
             height: 14px;
@@ -447,15 +476,87 @@
             opacity: 0.6;
         }
 
-        .answer {
-            margin-top: 1.25rem;
+        .model-readiness {
+            display: flex;
+            align-items: center;
+            gap: 0.55rem;
+            margin-bottom: 1rem;
+            padding: 0.65rem 0.75rem;
+            border: 1px solid var(--line);
+            border-radius: 9px;
+            color: var(--text-soft);
+            background: var(--surface-soft);
+            font-size: 0.78rem;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            flex: 0 0 auto;
+            border-radius: 50%;
+            background: #717989;
+        }
+
+        .model-readiness[data-status="loading"] .status-dot {
+            background: var(--accent);
+            box-shadow: 0 0 0 4px var(--accent-soft);
+            animation: pulse 1.2s ease-in-out infinite;
+        }
+
+        .model-readiness[data-status="ready"] .status-dot {
+            background: #8da7ff;
+        }
+
+        .model-readiness[data-status="error"] .status-dot {
+            background: var(--danger);
+        }
+
+        @keyframes pulse {
+            50% {
+                opacity: 0.45;
+                transform: scale(0.8);
+            }
+        }
+
+        .conversation {
+            margin-top: 1.5rem;
             padding-top: 1.25rem;
             border-top: 1px solid var(--line);
         }
 
+        .conversation-header {
+            margin-bottom: 0.85rem;
+        }
+
+        .conversation-header h2 {
+            margin: 0;
+            font-size: 0.95rem;
+        }
+
+        .conversation-header .helper {
+            min-height: 0;
+            margin: 0.1rem 0 0;
+        }
+
+        .answer {
+            padding: 1rem;
+            border: 1px solid var(--line);
+            border-radius: 11px;
+            background: var(--surface-soft);
+        }
+
+        .answer + .answer {
+            margin-top: 0.75rem;
+        }
+
+        .question-copy {
+            margin-bottom: 0.9rem;
+            color: #cbd4e5;
+            font-size: 0.88rem;
+            font-weight: 650;
+        }
+
         .answer-label {
-            display: block;
-            margin-bottom: 0.7rem;
             color: var(--accent-strong);
             font-size: 0.75rem;
             font-weight: 800;
@@ -464,10 +565,28 @@
         }
 
         .answer-copy {
-            margin-bottom: 1.2rem;
+            margin: 0.7rem 0 1.2rem;
             font-size: 1.12rem;
             line-height: 1.65;
             white-space: pre-wrap;
+        }
+
+        .copy-button {
+            appearance: none;
+            min-height: 30px;
+            padding: 0.25rem 0.55rem;
+            border: 1px solid var(--line);
+            border-radius: 7px;
+            color: var(--text-soft);
+            background: transparent;
+            font-size: 0.72rem;
+            font-weight: 700;
+        }
+
+        .copy-button:hover {
+            border-color: var(--accent);
+            color: var(--text);
+            background: var(--accent-soft);
         }
 
         .section-title {
@@ -852,6 +971,19 @@
                             </span>
                         </button>
                     </form>
+                    {% if document %}
+                    <div class="session-actions">
+                        <span class="helper">The current PDF and answers are stored in memory.</span>
+                        <form action="/documents/remove" method="post" data-remove-document>
+                            <button
+                                class="button button-secondary button-danger button-compact"
+                                type="submit"
+                            >
+                                Remove document
+                            </button>
+                        </form>
+                    </div>
+                    {% endif %}
                 </div>
             </details>
 
@@ -868,6 +1000,18 @@
                     <span class="chevron" aria-hidden="true"></span>
                 </summary>
                 <div class="step-content">
+                    {% if document %}
+                    <div
+                        class="model-readiness"
+                        id="model-readiness"
+                        data-status="{{ model_status }}"
+                        role="status"
+                        aria-live="polite"
+                    >
+                        <span class="status-dot" aria-hidden="true"></span>
+                        <span id="model-status-message">{{ model_status_message }}</span>
+                    </div>
+                    {% endif %}
                     <form
                         class="question-form"
                         id="question-form"
@@ -911,101 +1055,151 @@
                         </p>
                     </form>
 
-                    {% if answer %}
-                    <section class="answer" aria-labelledby="answer-heading" aria-live="polite">
-                        <span class="answer-label" id="answer-heading">Answer</span>
-                        <p class="answer-copy">{{ answer.answer }}</p>
-
-                        <h2 class="section-title">Sources</h2>
-                        <ol class="citations">
-                            {% for citation in answer.citations %}
-                            <li>
-                                <button
-                                    class="citation"
-                                    type="button"
-                                    data-open-dialog="source-{{ citation.source_number }}"
-                                    aria-haspopup="dialog"
-                                    aria-controls="source-{{ citation.source_number }}"
-                                >
-                                    <strong>Source {{ citation.source_number }}</strong>
-                                    · Page {{ citation.page_label }}
-                                </button>
-                            </li>
-                            {% endfor %}
-                        </ol>
-
-                        {% for citation in answer.citations %}
-                        {% set result = answer.retrieved[loop.index0] %}
-                        <dialog
-                            class="drawer"
-                            id="source-{{ citation.source_number }}"
-                            aria-labelledby="source-{{ citation.source_number }}-title"
-                        >
-                            <div class="drawer-panel">
-                                <header class="drawer-header">
-                                    <div>
-                                        <h2 id="source-{{ citation.source_number }}-title">
-                                            Source {{ citation.source_number }} · Page {{ citation.page_label }}
-                                        </h2>
-                                        <p>Supporting text used to answer your question</p>
-                                    </div>
-                                    <button
-                                        class="icon-button"
-                                        type="button"
-                                        data-close-dialog
-                                        aria-label="Close source"
-                                    >
-                                        ×
-                                    </button>
-                                </header>
-                                <div class="drawer-content">
-                                    <div class="drawer-actions">
-                                        <a
-                                            class="button button-secondary"
-                                            href="/documents/current.pdf#page={{ citation.page_start }}"
-                                            target="_blank"
-                                            rel="noopener"
-                                        >
-                                            Open original PDF at page {{ citation.page_start }}
-                                        </a>
-                                    </div>
-
-                                    <pre>{{ result.chunk.text }}</pre>
-
-                                    <details class="technical-details">
-                                        <summary>Technical details</summary>
-                                        <dl class="metadata">
-                                            <dt>Chunk ID</dt>
-                                            <dd><code>{{ result.chunk_id }}</code></dd>
-                                            <dt>Page range</dt>
-                                            <dd>{{ citation.page_label }}</dd>
-                                            <dt>Retrieval score</dt>
-                                            <dd>{{ "%.8f" | format(result.score) }}</dd>
-                                            <dt>Result rank</dt>
-                                            <dd>{{ result.rank }}</dd>
-                                            {% if result.bm25_rank is defined %}
-                                            <dt>BM25 rank</dt>
-                                            <dd>{{ result.bm25_rank or "Not retrieved" }}</dd>
-                                            {% endif %}
-                                            {% if result.dense_rank is defined %}
-                                            <dt>Dense rank</dt>
-                                            <dd>{{ result.dense_rank or "Not retrieved" }}</dd>
-                                            {% endif %}
-                                            {% if result.chunk.parent_chunk_id %}
-                                            <dt>Parent chunk</dt>
-                                            <dd><code>{{ result.chunk.parent_chunk_id }}</code></dd>
-                                            {% endif %}
-                                            <dt>Source elements</dt>
-                                            <dd>
-                                                {% for source_id in result.chunk.source_element_ids %}
-                                                <code>{{ source_id }}</code>{% if not loop.last %}<br>{% endif %}
-                                                {% endfor %}
-                                            </dd>
-                                        </dl>
-                                    </details>
-                                </div>
+                    {% if answer_history %}
+                    <section class="conversation" aria-labelledby="conversation-heading">
+                        <header class="conversation-header">
+                            <div>
+                                <h2 id="conversation-heading">Recent answers</h2>
+                                <p class="helper">Display only; each question is answered independently.</p>
                             </div>
-                        </dialog>
+                            <form action="/answers/clear" method="post">
+                                <button
+                                    class="button button-secondary button-compact"
+                                    type="submit"
+                                >
+                                    Clear answers
+                                </button>
+                            </form>
+                        </header>
+
+                        {% for entry in answer_history %}
+                        <article
+                            class="answer"
+                            aria-labelledby="answer-heading-{{ entry.entry_id }}"
+                        >
+                            <p class="question-copy">You asked: {{ entry.answer.question }}</p>
+                            <div class="answer-header">
+                                <span
+                                    class="answer-label"
+                                    id="answer-heading-{{ entry.entry_id }}"
+                                >
+                                    Answer
+                                </span>
+                                <button
+                                    class="copy-button"
+                                    type="button"
+                                    data-copy-target="answer-copy-{{ entry.entry_id }}"
+                                    data-default-label="Copy answer"
+                                >
+                                    Copy answer
+                                </button>
+                            </div>
+                            <p
+                                class="answer-copy"
+                                id="answer-copy-{{ entry.entry_id }}"
+                            >{{ entry.answer.answer }}</p>
+
+                            <h3 class="section-title">Sources</h3>
+                            <ol class="citations">
+                                {% for citation in entry.answer.citations %}
+                                <li>
+                                    <button
+                                        class="citation"
+                                        type="button"
+                                        data-open-dialog="source-{{ entry.entry_id }}-{{ citation.source_number }}"
+                                        aria-haspopup="dialog"
+                                        aria-controls="source-{{ entry.entry_id }}-{{ citation.source_number }}"
+                                    >
+                                        <strong>Source {{ citation.source_number }}</strong>
+                                        · Page {{ citation.page_label }}
+                                    </button>
+                                </li>
+                                {% endfor %}
+                            </ol>
+
+                            {% for citation in entry.answer.citations %}
+                            {% set result = entry.answer.retrieved[loop.index0] %}
+                            <dialog
+                                class="drawer"
+                                id="source-{{ entry.entry_id }}-{{ citation.source_number }}"
+                                aria-labelledby="source-{{ entry.entry_id }}-{{ citation.source_number }}-title"
+                            >
+                                <div class="drawer-panel">
+                                    <header class="drawer-header">
+                                        <div>
+                                            <h2 id="source-{{ entry.entry_id }}-{{ citation.source_number }}-title">
+                                                Source {{ citation.source_number }} · Page {{ citation.page_label }}
+                                            </h2>
+                                            <p>Supporting text used to answer your question</p>
+                                        </div>
+                                        <button
+                                            class="icon-button"
+                                            type="button"
+                                            data-close-dialog
+                                            aria-label="Close source"
+                                        >
+                                            ×
+                                        </button>
+                                    </header>
+                                    <div class="drawer-content">
+                                        <div class="drawer-actions">
+                                            <a
+                                                class="button button-secondary"
+                                                href="/documents/current.pdf#page={{ citation.page_start }}"
+                                                target="_blank"
+                                                rel="noopener"
+                                            >
+                                                Open original PDF at page {{ citation.page_start }}
+                                            </a>
+                                            <button
+                                                class="button button-secondary"
+                                                type="button"
+                                                data-copy-target="source-text-{{ entry.entry_id }}-{{ citation.source_number }}"
+                                                data-copy-prefix="Source {{ citation.source_number }} · Page {{ citation.page_label }}"
+                                                data-default-label="Copy citation"
+                                            >
+                                                Copy citation
+                                            </button>
+                                        </div>
+
+                                        <pre id="source-text-{{ entry.entry_id }}-{{ citation.source_number }}">{{ result.chunk.text }}</pre>
+
+                                        <details class="technical-details">
+                                            <summary>Technical details</summary>
+                                            <dl class="metadata">
+                                                <dt>Chunk ID</dt>
+                                                <dd><code>{{ result.chunk_id }}</code></dd>
+                                                <dt>Page range</dt>
+                                                <dd>{{ citation.page_label }}</dd>
+                                                <dt>Retrieval score</dt>
+                                                <dd>{{ "%.8f" | format(result.score) }}</dd>
+                                                <dt>Result rank</dt>
+                                                <dd>{{ result.rank }}</dd>
+                                                {% if result.bm25_rank is defined %}
+                                                <dt>BM25 rank</dt>
+                                                <dd>{{ result.bm25_rank or "Not retrieved" }}</dd>
+                                                {% endif %}
+                                                {% if result.dense_rank is defined %}
+                                                <dt>Dense rank</dt>
+                                                <dd>{{ result.dense_rank or "Not retrieved" }}</dd>
+                                                {% endif %}
+                                                {% if result.chunk.parent_chunk_id %}
+                                                <dt>Parent chunk</dt>
+                                                <dd><code>{{ result.chunk.parent_chunk_id }}</code></dd>
+                                                {% endif %}
+                                                <dt>Source elements</dt>
+                                                <dd>
+                                                    {% for source_id in result.chunk.source_element_ids %}
+                                                    <code>{{ source_id }}</code>{% if not loop.last %}<br>{% endif %}
+                                                    {% endfor %}
+                                                </dd>
+                                            </dl>
+                                        </details>
+                                    </div>
+                                </div>
+                            </dialog>
+                            {% endfor %}
+                        </article>
                         {% endfor %}
                     </section>
                     {% endif %}
@@ -1194,7 +1388,52 @@
         const askLabel = askButton && askButton.querySelector(".button-label");
         const cancelButton = document.getElementById("cancel-question");
         const questionStatus = document.getElementById("question-status");
+        const modelReadiness = document.getElementById("model-readiness");
+        const modelStatusMessage = document.getElementById("model-status-message");
         let questionController = null;
+        let modelStatusTimer = null;
+
+        const updateModelStatus = (status, message) => {
+            if (!modelReadiness || !modelStatusMessage) {
+                return;
+            }
+
+            modelReadiness.dataset.status = status;
+            modelStatusMessage.textContent = message;
+        };
+
+        const refreshModelStatus = async () => {
+            try {
+                const response = await fetch("/model/status", {cache: "no-store"});
+                if (!response.ok) {
+                    return;
+                }
+                const payload = await response.json();
+                if (payload.status === "not_loaded" && questionController) {
+                    return;
+                }
+                updateModelStatus(payload.status, payload.message);
+
+                if (payload.status === "ready" || payload.status === "error") {
+                    stopModelStatusPolling();
+                }
+            } catch (_error) {
+                // Model status is helpful progress information, not a blocking request.
+            }
+        };
+
+        const stopModelStatusPolling = () => {
+            if (modelStatusTimer) {
+                window.clearInterval(modelStatusTimer);
+                modelStatusTimer = null;
+            }
+        };
+
+        const startModelStatusPolling = () => {
+            stopModelStatusPolling();
+            void refreshModelStatus();
+            modelStatusTimer = window.setInterval(refreshModelStatus, 800);
+        };
 
         const renderHtmlResponse = (html) => {
             const nextDocument = new DOMParser().parseFromString(html, "text/html");
@@ -1243,6 +1482,11 @@
                 askLabel.textContent = askButton.dataset.busyLabel;
                 cancelButton.hidden = false;
                 questionStatus.textContent = "Finding an answer…";
+                updateModelStatus(
+                    "loading",
+                    "Preparing retrieval and the local answer model…",
+                );
+                startModelStatusPolling();
 
                 try {
                     const response = await fetch(questionForm.action, {
@@ -1252,8 +1496,10 @@
                     });
                     const html = await response.text();
 
+                    stopModelStatusPolling();
                     renderHtmlResponse(html);
                 } catch (error) {
+                    stopModelStatusPolling();
                     if (error.name === "AbortError") {
                         questionStatus.textContent =
                             "Request cancelled. Your document is still ready.";
@@ -1270,6 +1516,10 @@
                     questionController.abort();
                 }
             });
+        }
+
+        if (modelReadiness && modelReadiness.dataset.status === "loading") {
+            startModelStatusPolling();
         }
 
         document.querySelectorAll("[data-open-dialog]").forEach((button) => {
@@ -1301,6 +1551,60 @@
                 }
             });
         });
+
+        const copyText = async (text) => {
+            if (navigator.clipboard && window.isSecureContext) {
+                await navigator.clipboard.writeText(text);
+                return;
+            }
+
+            const textarea = document.createElement("textarea");
+            textarea.value = text;
+            textarea.style.position = "fixed";
+            textarea.style.opacity = "0";
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand("copy");
+            textarea.remove();
+        };
+
+        document.querySelectorAll("[data-copy-target]").forEach((button) => {
+            button.addEventListener("click", async () => {
+                const target = document.getElementById(button.dataset.copyTarget);
+                if (!target) {
+                    return;
+                }
+
+                const prefix = button.dataset.copyPrefix;
+                const text = prefix
+                    ? `${prefix}\n${target.textContent.trim()}`
+                    : target.textContent.trim();
+                const defaultLabel = button.dataset.defaultLabel || button.textContent.trim();
+
+                try {
+                    await copyText(text);
+                    button.textContent = "Copied";
+                } catch (_error) {
+                    button.textContent = "Copy failed";
+                }
+
+                window.setTimeout(() => {
+                    button.textContent = defaultLabel;
+                }, 1600);
+            });
+        });
+
+        const removeDocumentForm = document.querySelector("[data-remove-document]");
+        if (removeDocumentForm) {
+            removeDocumentForm.addEventListener("submit", (event) => {
+                const confirmed = window.confirm(
+                    "Remove the current PDF, its index, and all displayed answers?",
+                );
+                if (!confirmed) {
+                    event.preventDefault();
+                }
+            });
+        }
 
         const downloadButton = document.getElementById("download-chunks");
         const chunksJsonl = document.getElementById("chunks-jsonl");

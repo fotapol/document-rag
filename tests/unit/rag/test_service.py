@@ -122,6 +122,26 @@ def test_question_requires_an_index() -> None:
         service.answer("What was revenue?")
 
 
+def test_service_clears_index_without_discarding_generator_readiness() -> None:
+    """Removing a document should discard retrieval state without reloading weights."""
+
+    chunk = _chunk("chunk:revenue", 1, "Revenue was $100.")
+    service = RAGService(
+        config=RAGConfig(top_k=1, candidate_k=1),
+        retriever_factory=FakeRetrieverFactory(FakeRetriever(())),
+        generator=FakeGenerator("unused"),
+    )
+    service.index_document((chunk,))
+
+    service.clear_document()
+
+    assert service.is_indexed is False
+    assert service.chunks == ()
+    assert service.model_status == "ready"
+    with pytest.raises(RAGNotIndexedError, match="Upload and index"):
+        service.answer("What was revenue?")
+
+
 def test_empty_generator_response_is_rejected() -> None:
     """The service should never render a silent model failure as an answer."""
 

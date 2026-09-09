@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from threading import RLock
 from typing import Any, cast
 
 from document_rag.rag.config import RAGConfig
 from document_rag.rag.errors import RAGGenerationError
-from document_rag.rag.models import GroundedPrompt
+from document_rag.rag.models import GroundedPrompt, ModelStatus
 
 
 class QwenBaseLoraComparisonGenerator:
@@ -24,6 +25,12 @@ class QwenBaseLoraComparisonGenerator:
         adapter_answer = self._runtime.generate(prompt, adapter_enabled=True)
         return base_answer, adapter_answer
 
+    @property
+    def model_status(self) -> ModelStatus:
+        """Return the shared lazy model runtime state."""
+
+        return self._runtime.model_status
+
 
 class QwenLoraGenerator:
     """Load the pinned base model and financial LoRA only when first used."""
@@ -38,6 +45,12 @@ class QwenLoraGenerator:
 
         return self._runtime.generate(prompt, adapter_enabled=True)
 
+    @property
+    def model_status(self) -> ModelStatus:
+        """Return the lazy model runtime state for user-facing progress."""
+
+        return self._runtime.model_status
+
 
 class _QwenLoraRuntime:
     """Lazy tokenizer/model runtime supporting temporary adapter disablement."""
@@ -46,6 +59,19 @@ class _QwenLoraRuntime:
         self._config = config
         self._tokenizer: Any | None = None
         self._model: Any | None = None
+        self._model_status: ModelStatus = "not_loaded"
+        self._status_lock = RLock()
+
+    @property
+    def model_status(self) -> ModelStatus:
+        """Return a thread-safe snapshot of lazy model loading progress."""
+
+        with self._status_lock:
+            return self._model_status
+
+    def _set_model_status(self, status: ModelStatus) -> None:
+        with self._status_lock:
+            self._model_status = status
 
     def generate(self, prompt: GroundedPrompt, *, adapter_enabled: bool) -> str:
         """Generate deterministically with the adapter enabled or disabled."""
@@ -117,8 +143,10 @@ class _QwenLoraRuntime:
 
     def _load_model(self) -> tuple[Any, Any]:
         if self._tokenizer is not None and self._model is not None:
+            self._set_model_status("ready")
             return self._tokenizer, self._model
 
+        self._set_model_status("loading")
         try:
             from peft import PeftModel
             from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -147,8 +175,10 @@ class _QwenLoraRuntime:
             )
             model.eval()
         except Exception as exc:
+            self._set_model_status("error")
             raise RAGGenerationError("The assistant could not start. Please try again.") from exc
 
         self._tokenizer = tokenizer
         self._model = model
+        self._set_model_status("ready")
         return tokenizer, model

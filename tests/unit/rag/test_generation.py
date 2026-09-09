@@ -52,6 +52,14 @@ def test_application_generator_keeps_the_adapter_enabled(
     assert runtime.calls == [True]
 
 
+def test_application_generator_reports_unloaded_before_first_generation() -> None:
+    """A readiness check must not import dependencies or allocate model weights."""
+
+    generator = QwenLoraGenerator(RAGConfig())
+
+    assert generator.model_status == "not_loaded"
+
+
 def _prompt() -> GroundedPrompt:
     return GroundedPrompt(
         messages=(

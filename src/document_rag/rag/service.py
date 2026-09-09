@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from threading import RLock
-from typing import Protocol
+from typing import Protocol, cast
 
 from document_rag.ingestion.chunking import DocumentChunk
 from document_rag.rag.config import RAGConfig
 from document_rag.rag.errors import RAGGenerationError, RAGIndexingError, RAGNotIndexedError
 from document_rag.rag.generation import QwenLoraGenerator
-from document_rag.rag.models import GroundedPrompt, RAGAnswer
+from document_rag.rag.models import GroundedPrompt, ModelStatus, RAGAnswer
 from document_rag.rag.prompting import build_citations, build_grounded_prompt
 from document_rag.retrieval.bm25 import BM25Retriever, lexical_tokenize, normalize_bm25_query
 from document_rag.retrieval.dense import DenseEmbedder, DenseRetriever
@@ -156,6 +156,15 @@ class RAGService:
             ("Candidate pool", str(self._config.candidate_k)),
         )
 
+    @property
+    def model_status(self) -> ModelStatus:
+        """Return model readiness without forcing the lazy model to load."""
+
+        status = getattr(self._generator, "model_status", "ready")
+        if status in {"not_loaded", "loading", "ready", "error"}:
+            return cast(ModelStatus, status)
+        return "ready"
+
     def index_document(self, chunks: Iterable[DocumentChunk]) -> None:
         """Atomically replace the current index with one uploaded document."""
 
@@ -165,6 +174,13 @@ class RAGService:
         with self._lock:
             self._chunks = materialized_chunks
             self._retriever = retriever
+
+    def clear_document(self) -> None:
+        """Discard the current in-memory retrieval index but keep loaded weights."""
+
+        with self._lock:
+            self._chunks = ()
+            self._retriever = None
 
     def answer(self, question: str) -> RAGAnswer:
         """Retrieve top-K chunks, build grounded context, and generate an answer."""

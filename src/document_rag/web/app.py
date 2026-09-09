@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Protocol, cast
 from urllib.parse import quote
@@ -30,12 +31,13 @@ from document_rag.rag.errors import (
     RAGIndexingError,
     RAGNotIndexedError,
 )
-from document_rag.rag.models import RAGAnswer
+from document_rag.rag.models import ModelStatus, RAGAnswer
 from document_rag.rag.service import RAGService, build_default_rag_service
 
 LOGGER = logging.getLogger(__name__)
 
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+MAX_ANSWER_HISTORY = 10
 PDF_CONTENT_TYPES = {
     "application/pdf",
     "application/x-pdf",
@@ -43,6 +45,21 @@ PDF_CONTENT_TYPES = {
 
 TEMPLATE_DIRECTORY = Path(__file__).with_name("templates")
 TEMPLATES = Jinja2Templates(directory=TEMPLATE_DIRECTORY)
+
+MODEL_STATUS_MESSAGES: dict[ModelStatus, str] = {
+    "not_loaded": "The local model will load when you ask the first question.",
+    "loading": "Loading the local model. The first answer can take a few minutes.",
+    "ready": "The local model is ready.",
+    "error": "The local model could not start. Check the server logs.",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class AnswerHistoryEntry:
+    """One display-only question and answer retained for the current document."""
+
+    entry_id: int
+    answer: RAGAnswer
 
 
 class DocumentParser(Protocol):
@@ -77,6 +94,9 @@ class QuestionAnsweringService(Protocol):
     def answer(self, question: str) -> RAGAnswer:
         """Answer one question from the current in-memory index."""
 
+    def clear_document(self) -> None:
+        """Discard the current in-memory retrieval index."""
+
 
 def create_app(
     document_parser: DocumentParser | None = None,
@@ -96,6 +116,8 @@ def create_app(
     app.state.current_chunks = ()
     app.state.current_pdf_content = None
     app.state.current_pdf_filename = None
+    app.state.answer_history = ()
+    app.state.next_answer_id = 1
 
     @app.get("/health")
     async def health() -> JSONResponse:
@@ -135,6 +157,19 @@ def create_app(
                 "Content-Disposition": f"inline; filename*=UTF-8''{encoded_filename}",
                 "X-Content-Type-Options": "nosniff",
             },
+        )
+
+    @app.get("/model/status", response_class=JSONResponse)
+    async def model_status(request: Request) -> JSONResponse:
+        """Report lazy local-model readiness without triggering model loading."""
+
+        status = get_model_status(request)
+        return JSONResponse(
+            {
+                "status": status,
+                "message": MODEL_STATUS_MESSAGES[status],
+            },
+            headers={"Cache-Control": "no-store"},
         )
 
     @app.post("/documents/parse", response_class=HTMLResponse)
@@ -247,6 +282,8 @@ def create_app(
         request.app.state.current_chunks = chunks
         request.app.state.current_pdf_content = content
         request.app.state.current_pdf_filename = document.filename
+        request.app.state.answer_history = ()
+        request.app.state.next_answer_id = 1
 
         return render_result(
             request,
@@ -265,6 +302,14 @@ def create_app(
 
         document, chunks = get_current_document(request)
         normalized_question = question.strip()
+
+        if document is None:
+            return render_result(
+                request,
+                error="Upload and index a PDF before asking a question.",
+                question=normalized_question,
+                status_code=409,
+            )
 
         if not normalized_question:
             return render_result(
@@ -286,6 +331,9 @@ def create_app(
         except RAGNotIndexedError as exc:
             return render_result(
                 request,
+                document=document,
+                chunks=chunks,
+                chunks_jsonl=chunks_to_jsonl(chunks),
                 error=str(exc),
                 question=normalized_question,
                 status_code=409,
@@ -323,15 +371,48 @@ def create_app(
                 status_code=502,
             )
 
+        append_answer_history(request, answer)
         return render_result(
             request,
             document=document,
             chunks=chunks,
             chunks_jsonl=chunks_to_jsonl(chunks),
-            question=normalized_question,
-            answer=answer,
             status_code=200,
         )
+
+    @app.post("/answers/clear", response_class=HTMLResponse)
+    async def clear_answers(request: Request) -> HTMLResponse:
+        """Clear display-only answer history while retaining the current document."""
+
+        request.app.state.answer_history = ()
+        request.app.state.next_answer_id = 1
+        document, chunks = get_current_document(request)
+        return render_result(
+            request,
+            document=document,
+            chunks=chunks,
+            chunks_jsonl=chunks_to_jsonl(chunks),
+            status_code=200,
+        )
+
+    @app.post("/documents/remove", response_class=HTMLResponse)
+    async def remove_document(request: Request) -> HTMLResponse:
+        """Remove the document, retrieval index, PDF bytes, and display history."""
+
+        service = cast(
+            QuestionAnsweringService | None,
+            request.app.state.question_answering_service,
+        )
+        if service is not None:
+            await run_in_threadpool(service.clear_document)
+
+        request.app.state.current_document = None
+        request.app.state.current_chunks = ()
+        request.app.state.current_pdf_content = None
+        request.app.state.current_pdf_filename = None
+        request.app.state.answer_history = ()
+        request.app.state.next_answer_id = 1
+        return render_result(request, status_code=200)
 
     return app
 
@@ -419,6 +500,32 @@ def get_current_document(
     return document, chunks
 
 
+def get_model_status(request: Request) -> ModelStatus:
+    """Return service model readiness without creating the real service."""
+
+    service = request.app.state.question_answering_service
+    if service is None:
+        return "not_loaded"
+
+    status = getattr(service, "model_status", "ready")
+    if status in MODEL_STATUS_MESSAGES:
+        return cast(ModelStatus, status)
+    return "ready"
+
+
+def append_answer_history(request: Request, answer: RAGAnswer) -> None:
+    """Append one display entry and retain only the most recent answers."""
+
+    history = cast(
+        tuple[AnswerHistoryEntry, ...],
+        request.app.state.answer_history,
+    )
+    entry_id = cast(int, request.app.state.next_answer_id)
+    history = (*history, AnswerHistoryEntry(entry_id=entry_id, answer=answer))
+    request.app.state.answer_history = history[-MAX_ANSWER_HISTORY:]
+    request.app.state.next_answer_id = entry_id + 1
+
+
 def render_result(
     request: Request,
     *,
@@ -427,13 +534,17 @@ def render_result(
     chunks_jsonl: str = "",
     error: str | None = None,
     question: str = "",
-    answer: RAGAnswer | None = None,
     status_code: int,
 ) -> HTMLResponse:
     """Render the upload page, processing result, or user-facing error."""
 
     question_answering = request.app.state.question_answering_service
     technical_configuration: tuple[tuple[str, str], ...] = ()
+    answer_history = cast(
+        tuple[AnswerHistoryEntry, ...],
+        request.app.state.answer_history,
+    )
+    model_status = get_model_status(request)
 
     if isinstance(question_answering, RAGService):
         technical_configuration = question_answering.technical_configuration
@@ -447,8 +558,10 @@ def render_result(
             "chunks_jsonl": chunks_jsonl,
             "error": error,
             "question": question,
-            "answer": answer,
+            "answer_history": tuple(reversed(answer_history)),
             "max_upload_mb": MAX_UPLOAD_BYTES // 1024 // 1024,
+            "model_status": model_status,
+            "model_status_message": MODEL_STATUS_MESSAGES[model_status],
             "technical_configuration": technical_configuration,
         },
         status_code=status_code,

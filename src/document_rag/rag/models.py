@@ -8,6 +8,7 @@ from typing import Literal
 from document_rag.retrieval.models import RetrievalResult
 
 type ChatRole = Literal["system", "user"]
+type ModelStatus = Literal["not_loaded", "loading", "ready", "error"]
 
 
 @dataclass(frozen=True, slots=True)
