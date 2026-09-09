@@ -2,255 +2,1617 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1"
+        name="description"
+        content="Ask grounded questions about financial PDF documents with source citations."
     >
     <title>Document RAG</title>
     <style>
         :root {
-            color-scheme: light dark;
-            font-family: system-ui, sans-serif;
+            color-scheme: dark;
+            --canvas: #0b0d12;
+            --surface: #12151c;
+            --surface-raised: #181c25;
+            --surface-soft: #0f1218;
+            --line: #292e3a;
+            --line-strong: #3a4150;
+            --text: #f3f5f8;
+            --text-soft: #9ca5b5;
+            --accent: #7596ff;
+            --accent-strong: #91aaff;
+            --accent-soft: rgb(117 150 255 / 12%);
+            --danger: #ff858e;
+            --danger-soft: rgb(255 93 105 / 9%);
+            --radius: 14px;
+            font-family:
+                Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+                "Segoe UI", sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        [hidden] {
+            display: none !important;
+        }
+
+        html {
+            min-width: 320px;
+            background: var(--canvas);
         }
 
         body {
-            max-width: 960px;
-            margin: 0 auto;
-            padding: 2rem;
-            line-height: 1.5;
+            min-height: 100vh;
+            margin: 0;
+            color: var(--text);
+            background:
+                radial-gradient(circle at 50% -20%, rgb(117 150 255 / 10%), transparent 32rem),
+                var(--canvas);
+            font-size: 1rem;
+            line-height: 1.55;
         }
 
-        form,
-        .panel {
-            border: 1px solid #7776;
-            border-radius: 0.5rem;
+        button,
+        input {
+            font: inherit;
+        }
+
+        button,
+        summary,
+        input[type="file"] {
+            cursor: pointer;
+        }
+
+        button:focus-visible,
+        input:focus-visible,
+        summary:focus-visible {
+            outline: 3px solid rgb(117 150 255 / 42%);
+            outline-offset: 3px;
+        }
+
+        h1,
+        h2,
+        p {
+            margin-top: 0;
+        }
+
+        .site-header,
+        main,
+        .site-footer {
+            width: min(800px, calc(100% - 2rem));
+            margin-inline: auto;
+        }
+
+        .site-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            min-height: 68px;
+            border-bottom: 1px solid var(--line);
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            font-weight: 760;
+            letter-spacing: -0.02em;
+        }
+
+        .privacy-summary {
+            max-width: 490px;
+            margin: 0;
+            color: var(--text-soft);
+            font-size: 0.76rem;
+            text-align: right;
+        }
+
+        .privacy-summary strong {
+            color: #cbd4f5;
+        }
+
+        main {
+            padding-block: 3.25rem 2rem;
+        }
+
+        .hero {
+            margin-bottom: 2rem;
+        }
+
+        .eyebrow {
+            margin-bottom: 0.6rem;
+            color: var(--accent-strong);
+            font-size: 0.76rem;
+            font-weight: 800;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+        }
+
+        h1 {
+            margin-bottom: 0.75rem;
+            font-size: clamp(2.1rem, 7vw, 3.45rem);
+            line-height: 1.04;
+            letter-spacing: -0.05em;
+        }
+
+        .hero-copy {
+            max-width: 620px;
+            margin-bottom: 0;
+            color: var(--text-soft);
+        }
+
+        .error-panel {
+            display: flex;
+            gap: 0.8rem;
+            margin-bottom: 1rem;
             padding: 1rem;
-            margin: 1rem 0;
+            border: 1px solid rgb(255 133 142 / 30%);
+            border-radius: var(--radius);
+            color: #ffc4c8;
+            background: var(--danger-soft);
         }
 
-        button {
-            margin-top: 1rem;
-            padding: 0.6rem 1rem;
+        .error-panel strong,
+        .error-panel p {
+            margin: 0;
+        }
+
+        .error-icon {
+            color: var(--danger);
+            font-weight: 900;
+        }
+
+        .workflow {
+            display: grid;
+            gap: 0.75rem;
+        }
+
+        .workflow-step {
+            overflow: hidden;
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            background: var(--surface);
+        }
+
+        .workflow-step[open] {
+            border-color: var(--line-strong);
+            background: var(--surface-raised);
+        }
+
+        .step-summary {
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr) auto auto;
+            align-items: center;
+            gap: 0.9rem;
+            min-height: 72px;
+            padding: 0.9rem 1rem;
+            list-style: none;
+        }
+
+        .step-summary::-webkit-details-marker {
+            display: none;
+        }
+
+        .step-number {
+            display: grid;
+            width: 34px;
+            height: 34px;
+            place-items: center;
+            border: 1px solid var(--line-strong);
+            border-radius: 9px;
+            color: var(--accent-strong);
+            background: var(--surface-soft);
+            font-size: 0.75rem;
+            font-weight: 800;
+        }
+
+        .step-title,
+        .step-description {
+            display: block;
+        }
+
+        .step-title {
+            font-weight: 760;
+        }
+
+        .step-description {
+            overflow: hidden;
+            color: var(--text-soft);
+            font-size: 0.8rem;
+            font-weight: 450;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .step-state {
+            padding: 0.2rem 0.55rem;
+            border: 1px solid var(--line-strong);
+            border-radius: 999px;
+            color: var(--text-soft);
+            background: var(--surface-soft);
+            font-size: 0.7rem;
+            font-weight: 750;
+            text-transform: uppercase;
+        }
+
+        .step-state.ready {
+            border-color: rgb(117 150 255 / 34%);
+            color: #b8c7ff;
+            background: var(--accent-soft);
+        }
+
+        .summary-action {
+            min-height: 32px;
+            padding: 0.35rem 0.6rem;
+            border: 1px solid rgb(117 150 255 / 34%);
+            border-radius: 8px;
+            color: #c5d0f8;
+            background: var(--accent-soft);
+            font-size: 0.72rem;
+            font-weight: 750;
+        }
+
+        .summary-action:hover {
+            border-color: var(--accent);
+            background: rgb(117 150 255 / 18%);
+        }
+
+        .chevron {
+            display: grid;
+            width: 28px;
+            height: 28px;
+            place-items: center;
+            border-radius: 7px;
+            color: var(--text-soft);
+            transition: color 160ms ease, background 160ms ease;
+        }
+
+        .chevron::before {
+            width: 7px;
+            height: 7px;
+            border-right: 1.5px solid currentColor;
+            border-bottom: 1.5px solid currentColor;
+            content: "";
+            transform: translateY(-2px) rotate(45deg);
+            transition: transform 160ms ease;
+        }
+
+        .step-summary:hover .chevron {
+            color: var(--text);
+            background: var(--surface-soft);
+        }
+
+        .workflow-step[open] > .step-summary .chevron::before {
+            transform: translateY(2px) rotate(225deg);
+        }
+
+        .step-content {
+            padding: 1.15rem 1rem 1.2rem;
+            border-top: 1px solid var(--line);
+        }
+
+        .upload-form,
+        .question-form {
+            display: grid;
+            gap: 0.85rem;
+        }
+
+        .upload-zone {
+            display: grid;
+            gap: 0.55rem;
+            padding: 1rem;
+            border: 1px dashed var(--line-strong);
+            border-radius: 11px;
+            background: var(--surface-soft);
+        }
+
+        .upload-zone:focus-within {
+            border-color: var(--accent);
+        }
+
+        .upload-label,
+        .question-label {
+            font-weight: 700;
+        }
+
+        .helper,
+        .selected-file,
+        .request-status {
+            min-height: 1.25rem;
+            margin-bottom: 0;
+            color: var(--text-soft);
+            font-size: 0.82rem;
+        }
+
+        .selected-file,
+        .ready-message {
+            color: #bdc9f8;
+        }
+
+        .ready-message {
+            margin-bottom: 0.85rem;
+            font-weight: 650;
+        }
+
+        .session-actions,
+        .conversation-header,
+        .answer-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+        }
+
+        .session-actions {
+            margin-top: 0.75rem;
+        }
+
+        input[type="file"] {
+            width: 100%;
+            color: var(--text-soft);
+            font-size: 0.85rem;
+        }
+
+        input[type="file"]::file-selector-button {
+            margin-right: 0.75rem;
+            padding: 0.48rem 0.7rem;
+            border: 1px solid var(--line-strong);
+            border-radius: 8px;
+            color: var(--text);
+            background: var(--surface-raised);
+            font-weight: 700;
+        }
+
+        .button-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.65rem;
+        }
+
+        .button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            min-height: 44px;
+            padding: 0.6rem 0.95rem;
+            border: 1px solid var(--accent);
+            border-radius: 9px;
+            color: #091025;
+            background: var(--accent);
+            font-weight: 760;
+            text-decoration: none;
+            transition: border-color 150ms ease, background 150ms ease;
+        }
+
+        .button:hover {
+            border-color: var(--accent-strong);
+            background: var(--accent-strong);
+        }
+
+        .button:disabled {
+            cursor: not-allowed;
+            opacity: 0.58;
+        }
+
+        .button-secondary {
+            border-color: var(--line-strong);
+            color: var(--text);
+            background: transparent;
+        }
+
+        .button-secondary:hover {
+            border-color: #626b7d;
+            background: var(--surface-soft);
+        }
+
+        .button-cancel {
+            border-color: rgb(255 133 142 / 55%);
+            color: #ffc0c5;
+            background: transparent;
+        }
+
+        .button-cancel:hover {
+            border-color: var(--danger);
+            background: var(--danger-soft);
+        }
+
+        .button-compact {
+            min-height: 34px;
+            padding: 0.35rem 0.65rem;
+            font-size: 0.75rem;
+        }
+
+        .button-danger {
+            border-color: rgb(255 133 142 / 40%);
+            color: #ffc0c5;
+        }
+
+        .button-danger:hover {
+            border-color: var(--danger);
+            background: var(--danger-soft);
+        }
+
+        .button[aria-busy="true"]::before {
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgb(9 16 37 / 30%);
+            border-top-color: #091025;
+            border-radius: 50%;
+            content: "";
+            animation: spin 700ms linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .question-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 0.65rem;
         }
 
         input[type="text"] {
-            box-sizing: border-box;
-            margin-top: 0.5rem;
-            padding: 0.6rem;
             width: 100%;
+            min-height: 46px;
+            padding: 0.65rem 0.8rem;
+            border: 1px solid var(--line-strong);
+            border-radius: 9px;
+            color: var(--text);
+            background: var(--surface-soft);
         }
 
-        .error {
-            border-color: #c33;
+        input[type="text"]::placeholder {
+            color: #747d8d;
+        }
+
+        input[type="text"]:disabled {
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        .model-readiness {
+            display: flex;
+            align-items: center;
+            gap: 0.55rem;
+            margin-bottom: 1rem;
+            padding: 0.65rem 0.75rem;
+            border: 1px solid var(--line);
+            border-radius: 9px;
+            color: var(--text-soft);
+            background: var(--surface-soft);
+            font-size: 0.78rem;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            flex: 0 0 auto;
+            border-radius: 50%;
+            background: #717989;
+        }
+
+        .model-readiness[data-status="loading"] .status-dot {
+            background: var(--accent);
+            box-shadow: 0 0 0 4px var(--accent-soft);
+            animation: pulse 1.2s ease-in-out infinite;
+        }
+
+        .model-readiness[data-status="ready"] .status-dot {
+            background: #8da7ff;
+        }
+
+        .model-readiness[data-status="error"] .status-dot {
+            background: var(--danger);
+        }
+
+        @keyframes pulse {
+            50% {
+                opacity: 0.45;
+                transform: scale(0.8);
+            }
+        }
+
+        .conversation {
+            margin-top: 1.5rem;
+            padding-top: 1.25rem;
+            border-top: 1px solid var(--line);
+        }
+
+        .conversation-header {
+            margin-bottom: 0.85rem;
+        }
+
+        .conversation-header h2 {
+            margin: 0;
+            font-size: 0.95rem;
+        }
+
+        .conversation-header .helper {
+            min-height: 0;
+            margin: 0.1rem 0 0;
+        }
+
+        .answer {
+            padding: 1rem;
+            border: 1px solid var(--line);
+            border-radius: 11px;
+            background: var(--surface-soft);
+        }
+
+        .answer + .answer {
+            margin-top: 0.75rem;
+        }
+
+        .question-copy {
+            margin-bottom: 0.9rem;
+            color: #cbd4e5;
+            font-size: 0.88rem;
+            font-weight: 650;
+        }
+
+        .answer-label {
+            color: var(--accent-strong);
+            font-size: 0.75rem;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        .answer-copy {
+            margin: 0.7rem 0 1.2rem;
+            font-size: 1.12rem;
+            line-height: 1.65;
+            white-space: pre-wrap;
+        }
+
+        .copy-button {
+            appearance: none;
+            min-height: 30px;
+            padding: 0.25rem 0.55rem;
+            border: 1px solid var(--line);
+            border-radius: 7px;
+            color: var(--text-soft);
+            background: transparent;
+            font-size: 0.72rem;
+            font-weight: 700;
+        }
+
+        .copy-button:hover {
+            border-color: var(--accent);
+            color: var(--text);
+            background: var(--accent-soft);
+        }
+
+        .section-title {
+            margin-bottom: 0.65rem;
+            font-size: 0.9rem;
+        }
+
+        .citations {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin: 0;
+            padding: 0;
+            list-style: none;
+        }
+
+        .citation {
+            appearance: none;
+            padding: 0.45rem 0.65rem;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            color: var(--text-soft);
+            background: var(--surface-soft);
+            font-size: 0.78rem;
+        }
+
+        .citation:hover {
+            border-color: var(--accent);
+            color: var(--text);
+            background: var(--accent-soft);
+        }
+
+        .citation strong {
+            color: #bdc9f8;
+        }
+
+        body:has(dialog[open]) {
+            overflow: hidden;
+        }
+
+        .drawer {
+            width: 100%;
+            max-width: none;
+            height: 100%;
+            max-height: none;
+            margin: 0;
+            padding: 0;
+            border: 0;
+            color: var(--text);
+            background: transparent;
+        }
+
+        .drawer::backdrop {
+            background: rgb(2 4 8 / 72%);
+            backdrop-filter: blur(3px);
+        }
+
+        .drawer-panel {
+            width: min(680px, 100%);
+            height: 100%;
+            margin-left: auto;
+            overflow-y: auto;
+            border-left: 1px solid var(--line-strong);
+            background: var(--surface-raised);
+            box-shadow: -18px 0 50px rgb(0 0 0 / 35%);
+        }
+
+        .drawer-header {
+            position: sticky;
+            z-index: 1;
+            top: 0;
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 1rem;
+            padding: 1.15rem 1.25rem;
+            border-bottom: 1px solid var(--line);
+            background: rgb(24 28 37 / 96%);
+            backdrop-filter: blur(12px);
+        }
+
+        .drawer-header h2,
+        .drawer-header p {
+            margin-bottom: 0;
+        }
+
+        .drawer-header h2 {
+            font-size: 1.1rem;
+        }
+
+        .drawer-header p {
+            color: var(--text-soft);
+            font-size: 0.78rem;
+        }
+
+        .icon-button {
+            display: grid;
+            flex: 0 0 auto;
+            width: 36px;
+            height: 36px;
+            place-items: center;
+            border: 1px solid var(--line-strong);
+            border-radius: 9px;
+            color: var(--text-soft);
+            background: var(--surface-soft);
+            font-size: 1.2rem;
+        }
+
+        .icon-button:hover {
+            color: var(--text);
+            border-color: #626b7d;
+        }
+
+        .drawer-content {
+            padding: 1.25rem;
+        }
+
+        .drawer-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.6rem;
+            margin-bottom: 1rem;
+        }
+
+        .drawer-section + .drawer-section {
+            margin-top: 1.25rem;
+            padding-top: 1.25rem;
+            border-top: 1px solid var(--line);
+        }
+
+        .drawer-section h3 {
+            margin: 0 0 0.75rem;
+            font-size: 0.9rem;
+        }
+
+        .technical-details {
+            margin-top: 1rem;
+            border-top: 1px solid var(--line);
+        }
+
+        .technical-details > summary {
+            padding: 0.85rem 0;
+            color: var(--text-soft);
+            font-size: 0.82rem;
+            font-weight: 700;
+        }
+
+        .technical-details[open] > summary {
+            color: var(--accent-strong);
         }
 
         .metadata {
             display: grid;
-            grid-template-columns: max-content 1fr;
-            gap: 0.25rem 1rem;
+            grid-template-columns: max-content minmax(0, 1fr);
+            gap: 0.3rem 0.8rem;
+            margin: 0;
+            font-size: 0.76rem;
         }
 
         .metadata dt {
-            font-weight: 600;
+            color: var(--text-soft);
         }
 
         .metadata dd {
+            min-width: 0;
             margin: 0;
             overflow-wrap: anywhere;
         }
 
+        code,
         pre {
+            font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+        }
+
+        pre {
+            max-height: 360px;
+            margin: 0;
+            overflow: auto;
+            padding: 0.85rem;
+            border: 1px solid var(--line);
+            border-radius: 9px;
+            color: #c8ced9;
+            background: #090b0f;
+            font-size: 0.74rem;
+            line-height: 1.5;
             white-space: pre-wrap;
             overflow-wrap: anywhere;
         }
 
-        details {
-            margin: 1rem 0;
+        .technical-item {
+            padding: 0.85rem;
+            border: 1px solid var(--line);
+            border-radius: 9px;
+            background: var(--surface-soft);
         }
 
-        code {
-            font-family: ui-monospace, monospace;
+        .technical-item + .technical-item {
+            margin-top: 0.65rem;
         }
 
-        .chunk {
-            border-top: 1px solid #7776;
-            padding-top: 1rem;
-            margin-top: 1rem;
+        .technical-item-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            margin-bottom: 0.65rem;
+            font-size: 0.78rem;
+        }
+
+        .technical-item-header span {
+            color: var(--text-soft);
+        }
+
+        .model-notice {
+            margin: 1.2rem 0 0;
+            color: #747d8d;
+            font-size: 0.78rem;
+            text-align: center;
+        }
+
+        .site-footer {
+            padding-bottom: 2rem;
+            color: #5f6775;
+            font-size: 0.72rem;
+            text-align: center;
+        }
+
+        .site-footer a {
+            color: var(--text-soft);
+            text-decoration-color: rgb(156 165 181 / 45%);
+            text-underline-offset: 0.2em;
+        }
+
+        .site-footer a:hover {
+            color: var(--accent-strong);
+            text-decoration-color: currentColor;
+        }
+
+        @media (max-width: 600px) {
+            .site-header {
+                align-items: flex-start;
+                flex-direction: column;
+                justify-content: center;
+                padding-block: 0.75rem;
+            }
+
+            .privacy-summary {
+                text-align: left;
+            }
+
+            main {
+                padding-top: 2.2rem;
+            }
+
+            .step-summary {
+                grid-template-columns: auto minmax(0, 1fr) auto;
+            }
+
+            .step-state {
+                display: none;
+            }
+
+            .summary-action {
+                grid-row: 2;
+                grid-column: 2;
+                justify-self: start;
+            }
+
+            .chevron {
+                grid-row: 1;
+                grid-column: 3;
+            }
+
+            .question-row {
+                grid-template-columns: 1fr;
+            }
+
+            .question-row .button,
+            .upload-form > .button,
+            .button-row .button {
+                width: 100%;
+            }
+
+            .drawer-panel {
+                width: 100%;
+                border-left: 0;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *,
+            *::before,
+            *::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+            }
         }
     </style>
 </head>
 <body>
-    <main>
-        <h1>Document RAG</h1>
-        <p>
-            Upload one PDF. The server validates it, parses it with
-            LlamaParse, creates deterministic retrieval chunks, and indexes
-            them for grounded financial question answering.
+    <header class="site-header">
+        <div class="brand" aria-label="Document RAG">
+            <span>Document RAG</span>
+        </div>
+        <p class="privacy-summary">
+            <strong>Private chat.</strong> Answers run locally; LlamaParse processes PDFs.
         </p>
+    </header>
 
-        <form
-            action="/documents/parse"
-            method="post"
-            enctype="multipart/form-data"
-        >
-            <label for="file">
-                PDF file, maximum {{ max_upload_mb }} MB
-            </label>
-            <br>
-            <input
-                id="file"
-                name="file"
-                type="file"
-                accept="application/pdf,.pdf"
-                required
-            >
-            <br>
-            <button type="submit">Parse and chunk document</button>
-        </form>
+    <main>
+        <section class="hero" aria-labelledby="page-title">
+            <p class="eyebrow">Financial document assistant</p>
+            <h1 id="page-title">Ask your document.</h1>
+            <p class="hero-copy">Upload a financial PDF and get answers supported by its pages.</p>
+        </section>
 
         {% if error %}
-        <section class="panel error">
-            <h2>Request failed</h2>
-            <p>{{ error }}</p>
+        <section class="error-panel" role="alert" aria-live="assertive">
+            <span class="error-icon" aria-hidden="true">!</span>
+            <div>
+                <strong>Something went wrong</strong>
+                <p>{{ error }}</p>
+            </div>
         </section>
         {% endif %}
+
+        <section class="workflow" aria-label="Application workflow">
+            <details class="workflow-step" {% if not document %}open{% endif %}>
+                <summary class="step-summary">
+                    <span class="step-number">01</span>
+                    <span>
+                        <span class="step-title">Upload document</span>
+                        <span class="step-description">
+                            {% if document %}{{ document.filename }}{% else %}Choose a financial PDF{% endif %}
+                        </span>
+                    </span>
+                    {% if document %}
+                    <button
+                        class="summary-action"
+                        type="button"
+                        data-open-dialog="document-details"
+                        aria-haspopup="dialog"
+                        aria-controls="document-details"
+                    >
+                        View parsed document
+                    </button>
+                    {% else %}
+                    <span class="step-state">Start</span>
+                    {% endif %}
+                    <span class="chevron" aria-hidden="true"></span>
+                </summary>
+                <div class="step-content">
+                    {% if document %}
+                    <p class="ready-message">{{ document.filename }} is ready for questions.</p>
+                    {% endif %}
+                    <form
+                        class="upload-form"
+                        action="/documents/parse"
+                        method="post"
+                        enctype="multipart/form-data"
+                        data-upload-form
+                    >
+                        <div class="upload-zone">
+                            <label class="upload-label" for="file">
+                                {% if document %}Choose another PDF{% else %}Choose a PDF{% endif %}
+                            </label>
+                            <input
+                                id="file"
+                                name="file"
+                                type="file"
+                                accept="application/pdf,.pdf"
+                                aria-describedby="file-help selected-file"
+                                required
+                            >
+                            <p id="file-help" class="helper">Maximum {{ max_upload_mb }} MB.</p>
+                            <p id="selected-file" class="selected-file" aria-live="polite"></p>
+                        </div>
+                        <button class="button" type="submit" data-busy-label="Preparing…">
+                            <span class="button-label">
+                                {% if document %}Replace document{% else %}Upload document{% endif %}
+                            </span>
+                        </button>
+                    </form>
+                    {% if document %}
+                    <div class="session-actions">
+                        <span class="helper">The current PDF and answers are stored in memory.</span>
+                        <form action="/documents/remove" method="post" data-remove-document>
+                            <button
+                                class="button button-secondary button-danger button-compact"
+                                type="submit"
+                            >
+                                Remove document
+                            </button>
+                        </form>
+                    </div>
+                    {% endif %}
+                </div>
+            </details>
+
+            <details class="workflow-step" {% if document %}open{% endif %}>
+                <summary class="step-summary">
+                    <span class="step-number">02</span>
+                    <span>
+                        <span class="step-title">Ask this document</span>
+                        <span class="step-description">Get an answer and check its sources</span>
+                    </span>
+                    <span class="step-state {% if document %}ready{% endif %}">
+                        {% if document %}Ready{% else %}Waiting{% endif %}
+                    </span>
+                    <span class="chevron" aria-hidden="true"></span>
+                </summary>
+                <div class="step-content">
+                    {% if document %}
+                    <div
+                        class="model-readiness"
+                        id="model-readiness"
+                        data-status="{{ model_status }}"
+                        role="status"
+                        aria-live="polite"
+                    >
+                        <span class="status-dot" aria-hidden="true"></span>
+                        <span id="model-status-message">{{ model_status_message }}</span>
+                    </div>
+                    {% endif %}
+                    <form
+                        class="question-form"
+                        id="question-form"
+                        action="/questions/ask"
+                        method="post"
+                    >
+                        <label class="question-label" for="question">Your question</label>
+                        <div class="question-row">
+                            <input
+                                id="question"
+                                name="question"
+                                type="text"
+                                value="{{ question }}"
+                                placeholder="What was revenue in 2025?"
+                                autocomplete="off"
+                                {% if not document %}disabled{% endif %}
+                                required
+                            >
+                            <div class="button-row">
+                                <button
+                                    class="button"
+                                    id="ask-question"
+                                    type="submit"
+                                    data-busy-label="Answering…"
+                                    {% if not document %}disabled{% endif %}
+                                >
+                                    <span class="button-label">Ask question</span>
+                                </button>
+                                <button
+                                    class="button button-cancel"
+                                    id="cancel-question"
+                                    type="button"
+                                    hidden
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                        <p class="request-status" id="question-status" aria-live="polite">
+                            {% if not document %}Upload a PDF to ask a question.{% endif %}
+                        </p>
+                    </form>
+
+                    {% if answer_history %}
+                    <section class="conversation" aria-labelledby="conversation-heading">
+                        <header class="conversation-header">
+                            <div>
+                                <h2 id="conversation-heading">Recent answers</h2>
+                                <p class="helper">Display only; each question is answered independently.</p>
+                            </div>
+                            <form action="/answers/clear" method="post">
+                                <button
+                                    class="button button-secondary button-compact"
+                                    type="submit"
+                                >
+                                    Clear answers
+                                </button>
+                            </form>
+                        </header>
+
+                        {% for entry in answer_history %}
+                        <article
+                            class="answer"
+                            aria-labelledby="answer-heading-{{ entry.entry_id }}"
+                        >
+                            <p class="question-copy">You asked: {{ entry.answer.question }}</p>
+                            <div class="answer-header">
+                                <span
+                                    class="answer-label"
+                                    id="answer-heading-{{ entry.entry_id }}"
+                                >
+                                    Answer
+                                </span>
+                                <button
+                                    class="copy-button"
+                                    type="button"
+                                    data-copy-target="answer-copy-{{ entry.entry_id }}"
+                                    data-default-label="Copy answer"
+                                >
+                                    Copy answer
+                                </button>
+                            </div>
+                            <p
+                                class="answer-copy"
+                                id="answer-copy-{{ entry.entry_id }}"
+                            >{{ entry.answer.answer }}</p>
+
+                            <h3 class="section-title">Sources</h3>
+                            <ol class="citations">
+                                {% for citation in entry.answer.citations %}
+                                <li>
+                                    <button
+                                        class="citation"
+                                        type="button"
+                                        data-open-dialog="source-{{ entry.entry_id }}-{{ citation.source_number }}"
+                                        aria-haspopup="dialog"
+                                        aria-controls="source-{{ entry.entry_id }}-{{ citation.source_number }}"
+                                    >
+                                        <strong>Source {{ citation.source_number }}</strong>
+                                        · Page {{ citation.page_label }}
+                                    </button>
+                                </li>
+                                {% endfor %}
+                            </ol>
+
+                            {% for citation in entry.answer.citations %}
+                            {% set result = entry.answer.retrieved[loop.index0] %}
+                            <dialog
+                                class="drawer"
+                                id="source-{{ entry.entry_id }}-{{ citation.source_number }}"
+                                aria-labelledby="source-{{ entry.entry_id }}-{{ citation.source_number }}-title"
+                            >
+                                <div class="drawer-panel">
+                                    <header class="drawer-header">
+                                        <div>
+                                            <h2 id="source-{{ entry.entry_id }}-{{ citation.source_number }}-title">
+                                                Source {{ citation.source_number }} · Page {{ citation.page_label }}
+                                            </h2>
+                                            <p>Supporting text used to answer your question</p>
+                                        </div>
+                                        <button
+                                            class="icon-button"
+                                            type="button"
+                                            data-close-dialog
+                                            aria-label="Close source"
+                                        >
+                                            ×
+                                        </button>
+                                    </header>
+                                    <div class="drawer-content">
+                                        <div class="drawer-actions">
+                                            <a
+                                                class="button button-secondary"
+                                                href="/documents/current.pdf#page={{ citation.page_start }}"
+                                                target="_blank"
+                                                rel="noopener"
+                                            >
+                                                Open original PDF at page {{ citation.page_start }}
+                                            </a>
+                                            <button
+                                                class="button button-secondary"
+                                                type="button"
+                                                data-copy-target="source-text-{{ entry.entry_id }}-{{ citation.source_number }}"
+                                                data-copy-prefix="Source {{ citation.source_number }} · Page {{ citation.page_label }}"
+                                                data-default-label="Copy citation"
+                                            >
+                                                Copy citation
+                                            </button>
+                                        </div>
+
+                                        <pre id="source-text-{{ entry.entry_id }}-{{ citation.source_number }}">{{ result.chunk.text }}</pre>
+
+                                        <details class="technical-details">
+                                            <summary>Technical details</summary>
+                                            <dl class="metadata">
+                                                <dt>Chunk ID</dt>
+                                                <dd><code>{{ result.chunk_id }}</code></dd>
+                                                <dt>Page range</dt>
+                                                <dd>{{ citation.page_label }}</dd>
+                                                <dt>Retrieval score</dt>
+                                                <dd>{{ "%.8f" | format(result.score) }}</dd>
+                                                <dt>Result rank</dt>
+                                                <dd>{{ result.rank }}</dd>
+                                                {% if result.bm25_rank is defined %}
+                                                <dt>BM25 rank</dt>
+                                                <dd>{{ result.bm25_rank or "Not retrieved" }}</dd>
+                                                {% endif %}
+                                                {% if result.dense_rank is defined %}
+                                                <dt>Dense rank</dt>
+                                                <dd>{{ result.dense_rank or "Not retrieved" }}</dd>
+                                                {% endif %}
+                                                {% if result.chunk.parent_chunk_id %}
+                                                <dt>Parent chunk</dt>
+                                                <dd><code>{{ result.chunk.parent_chunk_id }}</code></dd>
+                                                {% endif %}
+                                                <dt>Source elements</dt>
+                                                <dd>
+                                                    {% for source_id in result.chunk.source_element_ids %}
+                                                    <code>{{ source_id }}</code>{% if not loop.last %}<br>{% endif %}
+                                                    {% endfor %}
+                                                </dd>
+                                            </dl>
+                                        </details>
+                                    </div>
+                                </div>
+                            </dialog>
+                            {% endfor %}
+                        </article>
+                        {% endfor %}
+                    </section>
+                    {% endif %}
+                </div>
+            </details>
+        </section>
 
         {% if document %}
-        <section class="panel">
-            <h2>Parsed document</h2>
-            <dl class="metadata">
-                <dt>Filename</dt>
-                <dd>{{ document.filename }}</dd>
-                <dt>Document ID</dt>
-                <dd><code>{{ document.document_id }}</code></dd>
-                <dt>Pages</dt>
-                <dd>{{ document.pages | length }}</dd>
-                <dt>Chunks</dt>
-                <dd>{{ chunks | length }}</dd>
-            </dl>
+        <dialog class="drawer" id="document-details" aria-labelledby="document-details-title">
+            <div class="drawer-panel">
+                <header class="drawer-header">
+                    <div>
+                        <h2 id="document-details-title">{{ document.filename }}</h2>
+                        <p>Parsed document and optional technical information</p>
+                    </div>
+                    <button
+                        class="icon-button"
+                        type="button"
+                        data-close-dialog
+                        aria-label="Close parsed document"
+                    >
+                        ×
+                    </button>
+                </header>
+                <div class="drawer-content">
+                    <div class="drawer-actions">
+                        <a
+                            class="button button-secondary"
+                            href="/documents/current.pdf"
+                            target="_blank"
+                            rel="noopener"
+                        >
+                            Open original PDF
+                        </a>
+                        <button
+                            class="button button-secondary"
+                            id="download-chunks"
+                            type="button"
+                            data-filename="chunks-{{ document.sha256[:12] }}.jsonl"
+                        >
+                            Download chunks as JSONL
+                        </button>
+                    </div>
+                    <textarea id="chunks-jsonl" hidden>{{ chunks_jsonl }}</textarea>
 
-            {% for page in document.pages %}
-            <details {% if loop.first %}open{% endif %}>
-                <summary>Parsed Markdown — page {{ page.page_number }}</summary>
-                <pre>{{ page.markdown }}</pre>
-            </details>
-            {% endfor %}
-        </section>
+                    <section class="drawer-section" aria-labelledby="document-overview-title">
+                        <h3 id="document-overview-title">Document overview</h3>
+                        <dl class="metadata">
+                            <dt>Pages</dt>
+                            <dd>{{ document.pages | length }}</dd>
+                            <dt>Chunks</dt>
+                            <dd>{{ chunks | length }}</dd>
+                            <dt>Document ID</dt>
+                            <dd><code>{{ document.document_id }}</code></dd>
+                            <dt>SHA-256</dt>
+                            <dd><code>{{ document.sha256 }}</code></dd>
+                        </dl>
+                    </section>
 
-        <section class="panel">
-            <h2>Ask this document</h2>
-            <form action="/questions/ask" method="post">
-                <label for="question">Financial question</label>
-                <input
-                    id="question"
-                    name="question"
-                    type="text"
-                    value="{{ question }}"
-                    placeholder="What was the percentage change in revenue?"
-                    required
-                >
-                <button type="submit">Retrieve and answer</button>
-            </form>
-            <p>
-                Answers use the configured top hybrid BM25 + dense results
-                from the currently uploaded document.
-            </p>
-        </section>
+                    <details class="technical-details" open>
+                        <summary>Parsed pages</summary>
+                        {% for page in document.pages %}
+                        <article class="technical-item">
+                            <div class="technical-item-header">
+                                <strong>Page {{ page.page_number }}</strong>
+                                <span>Parsed Markdown</span>
+                            </div>
+                            <pre>{{ page.markdown }}</pre>
+                        </article>
+                        {% endfor %}
+                    </details>
 
-        {% if answer %}
-        <section class="panel">
-            <h2>Answer</h2>
-            <p>{{ answer.answer }}</p>
-
-            <h3>Source citations</h3>
-            <ol>
-                {% for citation in answer.citations %}
-                <li>
-                    <strong>Source {{ citation.source_number }}</strong>:
-                    page {{ citation.page_label }},
-                    chunk <code>{{ citation.chunk_id }}</code>
-                </li>
-                {% endfor %}
-            </ol>
-
-            <details>
-                <summary>Retrieved chunks and scores</summary>
-                {% for result in answer.retrieved %}
-                <article class="chunk">
-                    <h3>Source {{ loop.index }}</h3>
-                    <dl class="metadata">
-                        <dt>Chunk ID</dt>
-                        <dd><code>{{ result.chunk_id }}</code></dd>
-                        <dt>Page</dt>
-                        <dd>
-                            {{ result.chunk.page_start }}{% if result.chunk.page_end != result.chunk.page_start %}-{{ result.chunk.page_end }}{% endif %}
-                        </dd>
-                        <dt>RRF score</dt>
-                        <dd>{{ "%.8f" | format(result.score) }}</dd>
-                        {% if result.bm25_rank is defined %}
-                        <dt>BM25 rank</dt>
-                        <dd>{{ result.bm25_rank or "not retrieved" }}</dd>
+                    <details class="technical-details">
+                        <summary>Index and model configuration</summary>
+                        {% if technical_configuration %}
+                        <dl class="metadata">
+                            {% for label, value in technical_configuration %}
+                            <dt>{{ label }}</dt>
+                            <dd><code>{{ value }}</code></dd>
+                            {% endfor %}
+                        </dl>
+                        {% else %}
+                        <p class="helper">Runtime configuration is unavailable for this session.</p>
                         {% endif %}
-                        {% if result.dense_rank is defined %}
-                        <dt>Dense rank</dt>
-                        <dd>{{ result.dense_rank or "not retrieved" }}</dd>
-                        {% endif %}
-                    </dl>
-                    <pre>{{ result.chunk.text }}</pre>
-                </article>
-                {% endfor %}
-            </details>
-        </section>
+                    </details>
+
+                    <details class="technical-details">
+                        <summary>Indexed chunks · {{ chunks | length }}</summary>
+                        {% for chunk in chunks %}
+                        <article class="technical-item">
+                            <div class="technical-item-header">
+                                <strong>Chunk {{ chunk.chunk_index }}</strong>
+                                <span>Page {{ chunk.page_start }}{% if chunk.page_end != chunk.page_start %}–{{ chunk.page_end }}{% endif %}</span>
+                            </div>
+                            <dl class="metadata">
+                                <dt>Chunk ID</dt>
+                                <dd><code>{{ chunk.chunk_id }}</code></dd>
+                                <dt>Characters</dt>
+                                <dd>{{ chunk.char_count }}</dd>
+                                <dt>Tokens</dt>
+                                <dd>{{ chunk.token_count }}</dd>
+                                <dt>Blocks</dt>
+                                <dd>{{ chunk.block_count }}</dd>
+                                {% if chunk.parent_chunk_id %}
+                                <dt>Parent chunk</dt>
+                                <dd><code>{{ chunk.parent_chunk_id }}</code></dd>
+                                {% endif %}
+                                <dt>Source elements</dt>
+                                <dd>
+                                    {% for source_id in chunk.source_element_ids %}
+                                    <code>{{ source_id }}</code>{% if not loop.last %}<br>{% endif %}
+                                    {% endfor %}
+                                </dd>
+                            </dl>
+                            <pre>{{ chunk.text }}</pre>
+                        </article>
+                        {% endfor %}
+                    </details>
+                </div>
+            </div>
+        </dialog>
         {% endif %}
 
-        <section class="panel">
-            <h2>Retrieval chunks</h2>
-            <p>
-                Chunk IDs are deterministic for identical document bytes,
-                page structure, configuration, and normalized Markdown.
-            </p>
+        <p class="model-notice">Model can make mistakes. Check important info.</p>
+    </main>
 
-            <button
-                id="download-chunks"
-                type="button"
-                data-filename="chunks-{{ document.sha256[:12] }}.jsonl"
-            >
-                Download chunks as JSONL
-            </button>
+    <footer class="site-footer">
+        Developed by
+        <a href="https://github.com/fotapol" target="_blank" rel="me noopener">fotapol</a>
+    </footer>
 
-            <textarea id="chunks-jsonl" hidden>{{ chunks_jsonl }}</textarea>
+    <script>
+        (() => {
+        "use strict";
 
-            {% for chunk in chunks %}
-            <article class="chunk">
-                <h3>Chunk {{ chunk.chunk_index }}</h3>
-                <dl class="metadata">
-                    <dt>Chunk ID</dt>
-                    <dd><code>{{ chunk.chunk_id }}</code></dd>
-                    <dt>Page</dt>
-                    <dd>{{ chunk.page_start }}</dd>
-                    <dt>Characters</dt>
-                    <dd>{{ chunk.char_count }}</dd>
-                    <dt>Tokens</dt>
-                    <dd>{{ chunk.token_count }}</dd>
-                    <dt>Markdown blocks</dt>
-                    <dd>{{ chunk.block_count }}</dd>
-                </dl>
-                <pre>{{ chunk.text }}</pre>
-            </article>
-            {% endfor %}
-        </section>
+        const fileInput = document.getElementById("file");
+        const selectedFile = document.getElementById("selected-file");
+        const uploadForm = document.querySelector("[data-upload-form]");
 
-        <script>
-            "use strict";
+        if (fileInput && selectedFile) {
+            fileInput.addEventListener("change", () => {
+                const file = fileInput.files && fileInput.files[0];
+                selectedFile.textContent = file ? `Selected: ${file.name}` : "";
+            });
+        }
 
-            const downloadButton =
-                document.getElementById("download-chunks");
-            const jsonlText =
-                document.getElementById("chunks-jsonl").value;
+        if (uploadForm) {
+            uploadForm.addEventListener("submit", () => {
+                if (!uploadForm.checkValidity()) {
+                    return;
+                }
 
+                const button = uploadForm.querySelector("button[type='submit']");
+                const label = button && button.querySelector(".button-label");
+
+                if (button) {
+                    button.disabled = true;
+                    button.setAttribute("aria-busy", "true");
+                }
+
+                if (label && button.dataset.busyLabel) {
+                    label.textContent = button.dataset.busyLabel;
+                }
+            });
+        }
+
+        const workflowSteps = document.querySelectorAll(".workflow > .workflow-step");
+
+        workflowSteps.forEach((step) => {
+            step.addEventListener("toggle", () => {
+                if (!step.open) {
+                    return;
+                }
+
+                workflowSteps.forEach((otherStep) => {
+                    if (otherStep !== step) {
+                        otherStep.open = false;
+                    }
+                });
+            });
+        });
+
+        const questionForm = document.getElementById("question-form");
+        const questionInput = document.getElementById("question");
+        const askButton = document.getElementById("ask-question");
+        const askLabel = askButton && askButton.querySelector(".button-label");
+        const cancelButton = document.getElementById("cancel-question");
+        const questionStatus = document.getElementById("question-status");
+        const modelReadiness = document.getElementById("model-readiness");
+        const modelStatusMessage = document.getElementById("model-status-message");
+        let questionController = null;
+        let modelStatusTimer = null;
+
+        const updateModelStatus = (status, message) => {
+            if (!modelReadiness || !modelStatusMessage) {
+                return;
+            }
+
+            modelReadiness.dataset.status = status;
+            modelStatusMessage.textContent = message;
+        };
+
+        const refreshModelStatus = async () => {
+            try {
+                const response = await fetch("/model/status", {cache: "no-store"});
+                if (!response.ok) {
+                    return;
+                }
+                const payload = await response.json();
+                if (payload.status === "not_loaded" && questionController) {
+                    return;
+                }
+                updateModelStatus(payload.status, payload.message);
+
+                if (payload.status === "ready" || payload.status === "error") {
+                    stopModelStatusPolling();
+                }
+            } catch (_error) {
+                // Model status is helpful progress information, not a blocking request.
+            }
+        };
+
+        const stopModelStatusPolling = () => {
+            if (modelStatusTimer) {
+                window.clearInterval(modelStatusTimer);
+                modelStatusTimer = null;
+            }
+        };
+
+        const startModelStatusPolling = () => {
+            stopModelStatusPolling();
+            void refreshModelStatus();
+            modelStatusTimer = window.setInterval(refreshModelStatus, 800);
+        };
+
+        const renderHtmlResponse = (html) => {
+            const nextDocument = new DOMParser().parseFromString(html, "text/html");
+
+            document.title = nextDocument.title;
+            document.head.replaceWith(nextDocument.head);
+            document.body.replaceWith(nextDocument.body);
+
+            document.querySelectorAll("script").forEach((script) => {
+                const replacement = document.createElement("script");
+
+                replacement.textContent = script.textContent;
+                script.replaceWith(replacement);
+            });
+        };
+
+        const resetQuestionForm = () => {
+            questionController = null;
+            questionInput.disabled = false;
+            askButton.disabled = false;
+            askButton.removeAttribute("aria-busy");
+            askLabel.textContent = "Ask question";
+            cancelButton.hidden = true;
+        };
+
+        if (
+            questionForm &&
+            questionInput &&
+            askButton &&
+            askLabel &&
+            cancelButton &&
+            questionStatus
+        ) {
+            questionForm.addEventListener("submit", async (event) => {
+                event.preventDefault();
+
+                if (!questionForm.checkValidity() || questionController) {
+                    return;
+                }
+
+                const formData = new FormData(questionForm);
+                questionController = new AbortController();
+                questionInput.disabled = true;
+                askButton.disabled = true;
+                askButton.setAttribute("aria-busy", "true");
+                askLabel.textContent = askButton.dataset.busyLabel;
+                cancelButton.hidden = false;
+                questionStatus.textContent = "Finding an answer…";
+                updateModelStatus(
+                    "loading",
+                    "Preparing retrieval and the local answer model…",
+                );
+                startModelStatusPolling();
+
+                try {
+                    const response = await fetch(questionForm.action, {
+                        method: "POST",
+                        body: formData,
+                        signal: questionController.signal,
+                    });
+                    const html = await response.text();
+
+                    stopModelStatusPolling();
+                    renderHtmlResponse(html);
+                } catch (error) {
+                    stopModelStatusPolling();
+                    if (error.name === "AbortError") {
+                        questionStatus.textContent =
+                            "Request cancelled. Your document is still ready.";
+                    } else {
+                        questionStatus.textContent = "Something went wrong. Please try again.";
+                    }
+                    resetQuestionForm();
+                    questionInput.focus();
+                }
+            });
+
+            cancelButton.addEventListener("click", () => {
+                if (questionController) {
+                    questionController.abort();
+                }
+            });
+        }
+
+        if (modelReadiness && modelReadiness.dataset.status === "loading") {
+            startModelStatusPolling();
+        }
+
+        document.querySelectorAll("[data-open-dialog]").forEach((button) => {
+            button.addEventListener("click", (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                const dialog = document.getElementById(button.dataset.openDialog);
+
+                if (dialog instanceof HTMLDialogElement) {
+                    dialog.showModal();
+                }
+            });
+        });
+
+        document.querySelectorAll("[data-close-dialog]").forEach((button) => {
+            button.addEventListener("click", () => {
+                const dialog = button.closest("dialog");
+
+                if (dialog instanceof HTMLDialogElement) {
+                    dialog.close();
+                }
+            });
+        });
+
+        document.querySelectorAll("dialog.drawer").forEach((dialog) => {
+            dialog.addEventListener("click", (event) => {
+                if (event.target === dialog) {
+                    dialog.close();
+                }
+            });
+        });
+
+        const copyText = async (text) => {
+            if (navigator.clipboard && window.isSecureContext) {
+                await navigator.clipboard.writeText(text);
+                return;
+            }
+
+            const textarea = document.createElement("textarea");
+            textarea.value = text;
+            textarea.style.position = "fixed";
+            textarea.style.opacity = "0";
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand("copy");
+            textarea.remove();
+        };
+
+        document.querySelectorAll("[data-copy-target]").forEach((button) => {
+            button.addEventListener("click", async () => {
+                const target = document.getElementById(button.dataset.copyTarget);
+                if (!target) {
+                    return;
+                }
+
+                const prefix = button.dataset.copyPrefix;
+                const text = prefix
+                    ? `${prefix}\n${target.textContent.trim()}`
+                    : target.textContent.trim();
+                const defaultLabel = button.dataset.defaultLabel || button.textContent.trim();
+
+                try {
+                    await copyText(text);
+                    button.textContent = "Copied";
+                } catch (_error) {
+                    button.textContent = "Copy failed";
+                }
+
+                window.setTimeout(() => {
+                    button.textContent = defaultLabel;
+                }, 1600);
+            });
+        });
+
+        const removeDocumentForm = document.querySelector("[data-remove-document]");
+        if (removeDocumentForm) {
+            removeDocumentForm.addEventListener("submit", (event) => {
+                const confirmed = window.confirm(
+                    "Remove the current PDF, its index, and all displayed answers?",
+                );
+                if (!confirmed) {
+                    event.preventDefault();
+                }
+            });
+        }
+
+        const downloadButton = document.getElementById("download-chunks");
+        const chunksJsonl = document.getElementById("chunks-jsonl");
+
+        if (downloadButton && chunksJsonl) {
             downloadButton.addEventListener("click", () => {
                 const blob = new Blob(
-                    [jsonlText],
+                    [chunksJsonl.value],
                     {type: "application/x-ndjson;charset=utf-8"},
                 );
                 const objectUrl = URL.createObjectURL(blob);
@@ -261,11 +1623,10 @@
                 document.body.appendChild(link);
                 link.click();
                 link.remove();
-
                 URL.revokeObjectURL(objectUrl);
             });
-        </script>
-        {% endif %}
-    </main>
+        }
+        })();
+    </script>
 </body>
 </html>

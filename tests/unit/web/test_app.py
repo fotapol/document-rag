@@ -13,7 +13,7 @@ from document_rag.ingestion.llamaparse import (
 from document_rag.rag.errors import RAGNotIndexedError
 from document_rag.rag.models import RAGAnswer, SourceCitation
 from document_rag.retrieval.models import RetrievalResult
-from document_rag.web.app import create_app
+from document_rag.web.app import MAX_ANSWER_HISTORY, MAX_UPLOAD_BYTES, create_app
 
 
 @dataclass
@@ -92,6 +92,9 @@ class FakeQuestionAnsweringService:
             retrieved=(result,),
         )
 
+    def clear_document(self) -> None:
+        self.indexed_chunks = ()
+
 
 def test_health() -> None:
     """The process health endpoint should return HTTP 200."""
@@ -104,8 +107,34 @@ def test_health() -> None:
     assert response.json() == {"status": "ok"}
 
 
-def test_parse_and_chunk_pdf() -> None:
-    """A valid PDF should render Markdown, chunks, and JSONL download."""
+def test_index_renders_accessible_empty_workspace() -> None:
+    """The landing page should explain the workflow before a PDF is uploaded."""
+
+    client = TestClient(create_app(FakeParser()))
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "Ask your document" in response.text
+    assert "Upload a PDF to ask a question." in response.text
+    assert "Private chat." in response.text
+    assert "Answers run locally; LlamaParse processes PDFs." in response.text
+    assert "brand-mark" not in response.text
+    assert 'href="https://github.com/fotapol"' in response.text
+    assert ">fotapol</a>" in response.text
+    assert 'aria-label="Application workflow"' in response.text
+    assert response.text.count('class="workflow-step"') == 2
+    assert 'id="cancel-question"' in response.text
+    assert "new AbortController()" in response.text
+    assert "questionController.abort()" in response.text
+    assert 'fetch("/model/status"' in response.text
+    assert "data-copy-target" in response.text
+    assert "color-scheme: dark" in response.text
+    assert "Model can make mistakes. Check important info." in response.text
+
+
+def test_parse_and_chunk_pdf_exposes_hidden_document_details() -> None:
+    """A valid PDF should offer parsed and indexed details in a closed drawer."""
 
     question_answering = FakeQuestionAnsweringService()
     client = TestClient(
@@ -128,18 +157,29 @@ def test_parse_and_chunk_pdf() -> None:
 
     assert response.status_code == 200
     assert "report.pdf" in response.text
+    assert "Ask this document" in response.text
+    assert "report.pdf is ready for questions." in response.text
+    assert "View parsed document" in response.text
+    assert '<dialog class="drawer" id="document-details"' in response.text
+    assert '<dialog class="drawer" id="document-details" open' not in response.text
     assert "Revenue: $100" in response.text
     assert "sha256:test" in response.text
-    assert "Retrieval chunks" in response.text
     assert "Download chunks as JSONL" in response.text
-    assert "Tokens" in response.text
-    assert "chunk:" in response.text
-    assert "Ask this document" in response.text
+    assert "Source elements" in response.text
+    assert "Indexed chunks" in response.text
+    assert "Remove document" in response.text
+    assert "Replace document" in response.text
+    assert "The local model is ready." in response.text
     assert len(question_answering.indexed_chunks) == 1
 
+    refreshed = client.get("/")
 
-def test_ask_question_displays_answer_citation_and_debug_context() -> None:
-    """The web MVP should preserve its in-memory index across form requests."""
+    assert refreshed.status_code == 200
+    assert "report.pdf is ready for questions." in refreshed.text
+
+
+def test_ask_question_displays_clickable_citation_and_hidden_details() -> None:
+    """A citation should open supporting text without showing diagnostics by default."""
 
     question_answering = FakeQuestionAnsweringService()
     client = TestClient(
@@ -168,10 +208,258 @@ def test_ask_question_displays_answer_citation_and_debug_context() -> None:
     assert response.status_code == 200
     assert question_answering.questions == ["What was revenue?"]
     assert "Revenue was $100 [Source 1]." in response.text
-    assert "Source citations" in response.text
-    assert "page 1" in response.text
+    assert ">Sources</h3>" in response.text
+    assert "Page 1" in response.text
+    assert 'data-open-dialog="source-1-1"' in response.text
+    assert 'id="source-1-1"' in response.text
+    assert 'href="/documents/current.pdf#page=1"' in response.text
+    assert "Open original PDF at page 1" in response.text
     assert question_answering.indexed_chunks[0].chunk_id in response.text
-    assert "Retrieved chunks and scores" in response.text
+    assert "Retrieval score" in response.text
+    assert "Technical details" in response.text
+    assert 'id="source-1-1" open' not in response.text
+    assert 'id="answer-heading-1"' in response.text
+    assert 'data-copy-target="answer-copy-1"' in response.text
+    assert 'data-copy-target="source-text-1-1"' in response.text
+
+
+def test_recent_answers_are_display_only_and_persist_for_current_document() -> None:
+    """The page should retain recent results without adding chat context to a question."""
+
+    question_answering = FakeQuestionAnsweringService()
+    client = TestClient(
+        create_app(
+            FakeParser(),
+            question_answering_service=question_answering,
+        )
+    )
+    client.post(
+        "/documents/parse",
+        files={"file": ("report.pdf", b"%PDF-1.7 fake", "application/pdf")},
+    )
+
+    client.post("/questions/ask", data={"question": "First question?"})
+    response = client.post("/questions/ask", data={"question": "Second question?"})
+    refreshed = client.get("/")
+
+    assert question_answering.questions == ["First question?", "Second question?"]
+    assert "Recent answers" in response.text
+    assert "Display only; each question is answered independently." in response.text
+    assert response.text.index("Second question?") < response.text.index("First question?")
+    assert 'id="source-2-1"' in response.text
+    assert 'id="source-1-1"' in response.text
+    assert "Second question?" in refreshed.text
+    assert "First question?" in refreshed.text
+
+
+def test_answer_history_keeps_only_the_most_recent_entries() -> None:
+    """A long-running local session should not grow the rendered page without bound."""
+
+    client = TestClient(
+        create_app(
+            FakeParser(),
+            question_answering_service=FakeQuestionAnsweringService(),
+        )
+    )
+    client.post(
+        "/documents/parse",
+        files={"file": ("report.pdf", b"%PDF-1.7 fake", "application/pdf")},
+    )
+
+    response = None
+    for number in range(MAX_ANSWER_HISTORY + 1):
+        response = client.post(
+            "/questions/ask",
+            data={"question": f"Question number {number}?"},
+        )
+
+    assert response is not None
+    assert response.text.count('class="answer"') == MAX_ANSWER_HISTORY
+    assert "Question number 0?" not in response.text
+    assert "Question number 1?" in response.text
+    assert f"Question number {MAX_ANSWER_HISTORY}?" in response.text
+
+
+def test_clear_answers_retains_the_current_document_and_index() -> None:
+    """Clearing display history should leave the current PDF ready to query."""
+
+    question_answering = FakeQuestionAnsweringService()
+    client = TestClient(
+        create_app(
+            FakeParser(),
+            question_answering_service=question_answering,
+        )
+    )
+    client.post(
+        "/documents/parse",
+        files={"file": ("report.pdf", b"%PDF-1.7 fake", "application/pdf")},
+    )
+    client.post("/questions/ask", data={"question": "What was revenue?"})
+
+    response = client.post("/answers/clear")
+
+    assert response.status_code == 200
+    assert "report.pdf is ready for questions." in response.text
+    assert "Recent answers" not in response.text
+    assert question_answering.indexed_chunks
+    assert client.get("/documents/current.pdf").status_code == 200
+
+
+def test_remove_document_clears_pdf_index_and_answer_history() -> None:
+    """Removing a document should return the complete in-memory session to empty."""
+
+    question_answering = FakeQuestionAnsweringService()
+    client = TestClient(
+        create_app(
+            FakeParser(),
+            question_answering_service=question_answering,
+        )
+    )
+    client.post(
+        "/documents/parse",
+        files={"file": ("report.pdf", b"%PDF-1.7 fake", "application/pdf")},
+    )
+    client.post("/questions/ask", data={"question": "What was revenue?"})
+
+    response = client.post("/documents/remove")
+
+    assert response.status_code == 200
+    assert "Upload a PDF to ask a question." in response.text
+    assert "Recent answers" not in response.text
+    assert question_answering.indexed_chunks == ()
+    assert client.get("/documents/current.pdf").status_code == 404
+
+
+def test_successful_replacement_clears_answers_for_the_previous_document() -> None:
+    """Answer history must never be displayed under a newly indexed PDF."""
+
+    client = TestClient(
+        create_app(
+            FakeParser(),
+            question_answering_service=FakeQuestionAnsweringService(),
+        )
+    )
+    client.post(
+        "/documents/parse",
+        files={"file": ("first.pdf", b"%PDF-1.7 first", "application/pdf")},
+    )
+    client.post("/questions/ask", data={"question": "Old question?"})
+
+    response = client.post(
+        "/documents/parse",
+        files={"file": ("second.pdf", b"%PDF-1.7 second", "application/pdf")},
+    )
+
+    assert response.status_code == 200
+    assert "second.pdf is ready for questions." in response.text
+    assert "Old question?" not in response.text
+    assert "Recent answers" not in response.text
+
+
+def test_model_status_endpoint_does_not_trigger_lazy_service_creation() -> None:
+    """Readiness polling must not allocate the real local model."""
+
+    client = TestClient(create_app(FakeParser()))
+
+    response = client.get("/model/status")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "not_loaded",
+        "message": "The local model will load when you ask the first question.",
+    }
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_current_pdf_is_unavailable_before_upload() -> None:
+    """The in-memory PDF endpoint should return 404 without a current document."""
+
+    client = TestClient(create_app(FakeParser()))
+
+    response = client.get("/documents/current.pdf")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "No document is currently available."}
+
+
+def test_current_pdf_returns_exact_bytes_with_safe_headers() -> None:
+    """The source viewer should serve the current PDF inline without caching it."""
+
+    pdf_content = b"%PDF-1.7 exact fake content"
+    client = TestClient(
+        create_app(
+            FakeParser(),
+            question_answering_service=FakeQuestionAnsweringService(),
+        )
+    )
+    upload_response = client.post(
+        "/documents/parse",
+        files={"file": ("financial report.pdf", pdf_content, "application/pdf")},
+    )
+
+    response = client.get("/documents/current.pdf")
+
+    assert upload_response.status_code == 200
+    assert response.status_code == 200
+    assert response.content == pdf_content
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["content-disposition"] == (
+        "inline; filename*=UTF-8''financial%20report.pdf"
+    )
+
+
+def test_failed_replacement_preserves_current_pdf() -> None:
+    """A parser failure must not discard the last successfully indexed PDF."""
+
+    original_content = b"%PDF-1.7 original"
+    app = create_app(
+        FakeParser(),
+        question_answering_service=FakeQuestionAnsweringService(),
+    )
+    client = TestClient(app)
+    first_response = client.post(
+        "/documents/parse",
+        files={"file": ("original.pdf", original_content, "application/pdf")},
+    )
+    client.post("/questions/ask", data={"question": "Keep this answer?"})
+    app.state.document_parser = FailingParser()
+
+    failed_response = client.post(
+        "/documents/parse",
+        files={"file": ("replacement.pdf", b"%PDF-1.7 replacement", "application/pdf")},
+    )
+    current_pdf_response = client.get("/documents/current.pdf")
+
+    assert first_response.status_code == 200
+    assert failed_response.status_code == 502
+    assert "original.pdf is ready for questions." in failed_response.text
+    assert "replacement.pdf is ready for questions." not in failed_response.text
+    assert "Keep this answer?" in failed_response.text
+    assert current_pdf_response.status_code == 200
+    assert current_pdf_response.content == original_content
+    assert "original.pdf" in current_pdf_response.headers["content-disposition"]
+
+
+def test_reject_pdf_above_twenty_megabytes() -> None:
+    """The application should retain its bounded in-memory upload policy."""
+
+    client = TestClient(create_app(FakeParser()))
+
+    response = client.post(
+        "/documents/parse",
+        files={
+            "file": (
+                "oversized.pdf",
+                b"%PDF-" + b"0" * (MAX_UPLOAD_BYTES - 4),
+                "application/pdf",
+            )
+        },
+    )
+
+    assert response.status_code == 413
+    assert "exceeds the 20 MB limit" in response.text
 
 
 def test_ask_question_before_upload_returns_conflict() -> None:
@@ -251,3 +539,4 @@ def test_render_known_parser_failure() -> None:
 
     assert response.status_code == 502
     assert "Parser failed." in response.text
+    assert 'role="alert"' in response.text

@@ -105,6 +105,8 @@ def test_service_indexes_retrieves_prompts_generates_and_cites() -> None:
     assert answer.citations[0].chunk_id == "chunk:revenue"
     assert answer.citations[0].page_label == "3"
     assert "Revenue was $100." in generator.prompts[0].messages[1].content
+    assert dict(service.technical_configuration)["Retrieval"] == "Hybrid BM25 + dense RRF"
+    assert dict(service.technical_configuration)["Top results"] == "1"
 
 
 def test_question_requires_an_index() -> None:
@@ -116,6 +118,26 @@ def test_question_requires_an_index() -> None:
         generator=FakeGenerator("unused"),
     )
 
+    with pytest.raises(RAGNotIndexedError, match="Upload and index"):
+        service.answer("What was revenue?")
+
+
+def test_service_clears_index_without_discarding_generator_readiness() -> None:
+    """Removing a document should discard retrieval state without reloading weights."""
+
+    chunk = _chunk("chunk:revenue", 1, "Revenue was $100.")
+    service = RAGService(
+        config=RAGConfig(top_k=1, candidate_k=1),
+        retriever_factory=FakeRetrieverFactory(FakeRetriever(())),
+        generator=FakeGenerator("unused"),
+    )
+    service.index_document((chunk,))
+
+    service.clear_document()
+
+    assert service.is_indexed is False
+    assert service.chunks == ()
+    assert service.model_status == "ready"
     with pytest.raises(RAGNotIndexedError, match="Upload and index"):
         service.answer("What was revenue?")
 
