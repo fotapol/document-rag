@@ -149,6 +149,8 @@ activemq-data/
 
 # Environments
 .env
+.env.*
+!.env.example
 .envrc
 .venv
 env/
@@ -220,3 +222,18 @@ data/
 
 # Generated retrieval benchmark artifacts
 artifacts/
+
+# Local documents, archives, and model outputs
+*.pdf
+*.zip
+*.7z
+*.tar
+*.tar.gz
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+*.onnx
+checkpoint-*/
+models/
+outputs/

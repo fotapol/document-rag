@@ -13,7 +13,12 @@ from document_rag.ingestion.llamaparse import (
 from document_rag.rag.errors import RAGNotIndexedError
 from document_rag.rag.models import RAGAnswer, SourceCitation
 from document_rag.retrieval.models import RetrievalResult
-from document_rag.web.app import MAX_ANSWER_HISTORY, MAX_UPLOAD_BYTES, create_app
+from document_rag.web.app import (
+    MAX_ANSWER_HISTORY,
+    MAX_UPLOAD_BYTES,
+    PACKAGE_VERSION,
+    create_app,
+)
 
 
 @dataclass
@@ -105,6 +110,7 @@ def test_health() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+    assert client.get("/openapi.json").json()["info"]["version"] == PACKAGE_VERSION
 
 
 def test_index_renders_accessible_empty_workspace() -> None:
