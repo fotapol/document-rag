@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from importlib.metadata import version as distribution_version
 from pathlib import Path
 from typing import Annotated, Protocol, cast
 from urllib.parse import quote
@@ -45,6 +46,7 @@ PDF_CONTENT_TYPES = {
 
 TEMPLATE_DIRECTORY = Path(__file__).with_name("templates")
 TEMPLATES = Jinja2Templates(directory=TEMPLATE_DIRECTORY)
+PACKAGE_VERSION = distribution_version("document-rag")
 
 MODEL_STATUS_MESSAGES: dict[ModelStatus, str] = {
     "not_loaded": "The local model will load when you ask the first question.",
@@ -107,7 +109,7 @@ def create_app(
 
     app = FastAPI(
         title="Document RAG",
-        version="0.2.0",
+        version=PACKAGE_VERSION,
     )
     app.state.document_parser = document_parser
     app.state.document_chunker = document_chunker or MarkdownChunker()
