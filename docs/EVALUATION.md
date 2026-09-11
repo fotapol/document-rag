@@ -122,7 +122,12 @@ uv run --no-sync document-rag rag evaluate `
 The published
 [`fotapol/qwen3-1.7b-financial-rag-lora-v4`](https://huggingface.co/fotapol/qwen3-1.7b-financial-rag-lora-v4)
 was compared with the pinned Qwen base on the same 900 schema-v6 validation prompts using greedy
-decoding.
+decoding. The complete comparison is published as
+[Financial RAG v4 · Stage 3 of 3](https://www.kaggle.com/code/fotapol/financial-rag-v4-stage-3-of-3),
+using the frozen
+[schema-v6 dataset](https://www.kaggle.com/datasets/fotapol/financial-rag-training-v4-schema-v6)
+created by the public
+[Stage 1 notebook](https://www.kaggle.com/code/fotapol/financial-rag-v4-stage-1-of-3).
 
 | Metric | Base | v4 | v4 - base |
 |---|---:|---:|---:|

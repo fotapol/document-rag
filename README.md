@@ -1,5 +1,8 @@
 # Document RAG
 
+[![CI](https://github.com/fotapol/document-rag/actions/workflows/ci.yml/badge.svg)](https://github.com/fotapol/document-rag/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/fotapol/document-rag?display_name=tag&sort=semver)](https://github.com/fotapol/document-rag/releases/latest)
+
 An auditable, local-first RAG application for asking grounded questions about financial PDF
 documents. It preserves page and source lineage from parsing through retrieval and presents every
 answer with inspectable citations.
@@ -32,6 +35,20 @@ The current interface supports:
 
 Previous answers are not model memory. Each request contains only the current question and the
 chunks retrieved for it.
+
+## Reproduce the v4 experiment
+
+The published Kaggle workflow preserves the exact data transformation, training, and evaluation
+used for the v4 adapter:
+
+| Stage | Notebook | Input or output artifact |
+|---|---|---|
+| 1. Prepare | [Build the schema-v6 dataset](https://www.kaggle.com/code/fotapol/financial-rag-v4-stage-1-of-3) | [Schema-v5 input](https://www.kaggle.com/datasets/fotapol/financial-rag-training-v3-schema-v5) → [schema-v6 release](https://www.kaggle.com/datasets/fotapol/financial-rag-training-v4-schema-v6) |
+| 2. Train | [Fine-tune Qwen3-1.7B with QLoRA](https://www.kaggle.com/code/fotapol/financial-rag-v4-stage-2-of-3) | Schema v6 → adapter release |
+| 3. Evaluate | [Compare base and adapter](https://www.kaggle.com/code/fotapol/financial-rag-v4-stage-3-of-3) | Schema-v6 validation split + adapter |
+
+The resulting adapter and model card are published on
+[Hugging Face](https://huggingface.co/fotapol/qwen3-1.7b-financial-rag-lora-v4).
 
 ## Interface
 
@@ -123,6 +140,7 @@ settings are:
 
 The application pins:
 
+- `llama-cloud==2.13.0` as the LlamaParse client;
 - `BAAI/bge-small-en-v1.5` for dense embeddings;
 - `Qwen/Qwen3-1.7B` as the base generator; and
 - [`fotapol/qwen3-1.7b-financial-rag-lora-v4`](https://huggingface.co/fotapol/qwen3-1.7b-financial-rag-lora-v4)
@@ -155,7 +173,8 @@ CI runs the same checks and a Gitleaks secret scan for every pull request and pu
 
 ## Known limitations
 
-- LlamaParse is a third-party cloud dependency and can change independently of this repository.
+- The LlamaParse client is pinned, but the third-party cloud service can change independently of
+  this repository.
 - There is no authentication, persistent index, vector database, or multi-user session isolation.
 - Browser cancellation does not guarantee interruption of model work already running in a Python
   worker thread.

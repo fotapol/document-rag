@@ -26,7 +26,7 @@ dependencies = [
     "accelerate>=1.14.0",
     "fastapi[standard]>=0.141.1",
     "ijson>=3.5.1",
-    "llama-cloud>=2.8",
+    "llama-cloud==2.13.0",
     "numpy>=2.5.2",
     "peft>=0.20.0",
     "pydantic>=2.13.4,<3",

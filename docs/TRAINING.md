@@ -141,9 +141,27 @@ reviewed. Check:
 A high oracle-augmentation rate is a retrieval diagnostic. Do not describe it as production
 retrieval success or weaken the unit rules merely to keep more records.
 
-## Kaggle handoff
+## Published Kaggle workflow
 
-Kaggle supplies GPU compute; preprocessing logic remains versioned here.
+Kaggle supplies GPU compute, while the repository and frozen datasets preserve preprocessing and
+experiment provenance. The public v4 chain is:
+
+1. [Schema-v5 dataset](https://www.kaggle.com/datasets/fotapol/financial-rag-training-v3-schema-v5)
+   — the exact output of the repository exporter used by the experiment.
+2. [Stage 1: prepare schema v6](https://www.kaggle.com/code/fotapol/financial-rag-v4-stage-1-of-3)
+   — deterministic curation and integrity checks.
+3. [Schema-v6 dataset](https://www.kaggle.com/datasets/fotapol/financial-rag-training-v4-schema-v6)
+   — 9,000 training, 900 validation, and 900 test examples.
+4. [Stage 2: train the adapter](https://www.kaggle.com/code/fotapol/financial-rag-v4-stage-2-of-3)
+   — the recorded two-T4 QLoRA run.
+5. [Stage 3: evaluate base versus adapter](https://www.kaggle.com/code/fotapol/financial-rag-v4-stage-3-of-3)
+   — the frozen 900-example validation comparison.
+
+The boundary between schema versions is intentional: the repository exporter produces schema v5;
+the published Stage 1 notebook performs the separate schema-v6 curation used by v4. Both datasets
+are immutable, hash-verified inputs rather than notebook-output ZIP dependencies.
+
+For future experiments:
 
 1. Upload the frozen JSONL files and manifest as a private, versioned Kaggle Dataset.
 2. Record the repository commit and manifest SHA-256 in the notebook configuration.
@@ -167,9 +185,9 @@ RAG-shaped examples:
 Training completed 1,125 optimizer steps using 4-bit NF4 QLoRA on two NVIDIA T4 GPUs with LoRA rank
 16, alpha 32, dropout 0.05, effective batch size 8, and learning rate `1e-4`.
 
-The v4 model card records hashes for the weights, adapter configuration, and training manifest. The
-schema-v6 curation step is not produced by the repository's current schema-v5 exporter; this
-distinction is stated explicitly so the public repository does not claim byte-for-byte
-reproducibility that it does not provide.
+The v4 model card records hashes for the weights, adapter configuration, and training manifest.
+The public Stage 1 notebook records the additional schema-v6 curation step, while this repository's
+exporter remains responsible for schema v5. The published datasets preserve the exact boundary and
+provide byte-for-byte inputs for the recorded training and evaluation notebooks.
 
 See [Evaluation](EVALUATION.md) for the recorded base-versus-v4 results and limitations.
